@@ -1,0 +1,2998 @@
+---
+title: "Supplementary Code for manuscript entitled - Rabies virus interferon antagonist
+  P protein selectively modulates interferon signalling to inhibit antiviral genes
+  while supporting proviral gene expression"
+author: "Alebachew Messele Kebede  \nCassandra T. David  \nStephen M. Rawlinson  \nCeline
+  Deffrasnes  \nPaul Gooley  \nSamuel C. Forster  \nGregory W. Moseley\n"
+date: "2026-07-10"
+output:
+  html_document:
+    toc: true
+    toc_depth: '3'
+    df_print: paged
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 3
+    number_sections: true
+geometry: margin=1in
+header-includes:
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \renewcommand{\headrulewidth}{0.4pt}
+- \renewcommand{\footrulewidth}{0.4pt}
+- \fancyhf{}
+- \rfoot{\thepage}
+- \usepackage{fvextra}
+- \fvset{breaklines=true, breakanywhere=true}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+
+here::i_am("01_RNAseq_Analysis.Rmd")
+
+data_raw_dir <- here::here("data_raw")
+data_processed_dir <- here::here("data_processed")
+results_dir <- here::here("results")
+figures_dir <- here::here("results", "figures")
+tables_dir <- here::here("results", "tables")
+
+dir.create(data_processed_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(tables_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+# Introduction 
+
+This reproducible and dynamic report was created using Rmarkdown and the Knitr package, and summarizes the basic code and outputs (plots, tables, etc) produced during the analysis. The relative file paths indicated in the code below assume that your project working directly is structured as indicated in the **README.MD** file.
+
+---
+
+# Background 
+
+Rabies virus P-protein (RABV-P) binds and inhibits IFN-activated STAT1/2 and so are typically considered to mediate shutdown of the IFN response. However, IFN signalling is not exclusively antiviral, with many IRGs reported to be required for or to facilitate infection by certain viruses. How viruses coordinate the apparent need to suppress certain antiviral IRGs, while presumably permitting the expression of others, including ‘proviral’ IRGs is poorly defined. However, it has been shown that type-I IFN can activate multiple pathways other than classical STAT1/2, so discriminatory targeting of specific pathways by IFN-antagonists may enable highly selective regulation of distinct IRGs, dependent on the requirements of the specific virus. Here, we analyse the global effects of RABV-P protein on the IFN-regulated transcriptome. 
+
+The code below shows how raw data was preprocessed, mapped, and analyzed to investigate the effect of RABV-P protein on the expression of ISGs. 
+
+---
+
+# Reproducibility and accessibility
+
+In order to reproduce all steps listed below, including QC of raw reads and read mapping, raw fastq files will need to be downloaded from the ENA, under accession \textcolor{red}{**xxx**}. Gene count files
+and all code used in this analysis, including the Rmarkdown document used to compile this supplementary code file, are all available on GitHub [here](https://github.com/Alebachew23/project-alpha). Once this GitHub repo has been downloaded, navigate to root directory to find the Rmarkdown document as well as an RProject file. This should be your working directory for executing code. Downloaded data should be placed in data_raw directory. The analysis script uses `here::here()` so paths resolve from the project root.
+Output files are written under `results/figures/` and `results/tables/`. R1 and R2 FASTQ files were de-multiplexed using cutadapt v3.3 (with error rate 1/0 and action none) for deposition in ENA 
+
+The library structure is as follows : R1 primer is used to read sample index (8 bp) followed by 10 bp unique molecular identifier (UMI). R2 primer reads the 3' end of the cDNA in sense orientation. 
+
+ Sample indexes are provided as fasta file. 
+
+Demultiplexing with cutadapt 
+```{bash, eval=FALSE}
+cutadapt \
+    -g file:Sample_Index_barcode.fasta \
+    --action=none \
+    -e 0 \
+    --pair-filter=both \
+    -o demux/{name}_R1.fastq.gz \
+    -p demux/{name}_R2.fastq.gz \
+    *.fastq.gz \
+    *.fastq.gz
+```
+
+
+---
+
+# R packages used for this analysis 
+
+A variety of R packages was used for this analysis. All graphics and data wrangling were handled using the
+tidyverse suite of packages. All packages used are available from the Comprehensive R Archive Network
+(CRAN), Bioconductor.org, or Github. To avoid conflict additional R packages are added or detached in the latter part of the analysis. 
+
+```{r, message=FALSE}
+# source("02_Packages.R")
+library(here)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(biomaRt)
+library(magrittr)
+library(RColorBrewer)
+library(openxlsx)
+library(dplyr)
+library(stringr)
+library(readr)
+library(edgeR)
+library(gt)
+library(ggridges)
+library(circlize)
+```
+
+___
+
+# Preprocessing
+
+Raw RNAseq reads were pre-processed using ScPipe package (https://github.com/LuyiTian/scPipe) which was used for demultiplexing, transcript mapping and quality control of raw sequencing data. Reads were aligned to the human primary assembly genome file using the Rsubread (v3.17) package. 
+```{r, eval=FALSE}
+library(scPipe)
+# Barcode annotation
+barcode_annotation <- here::here("data_raw", "210119_NB551334_0179_AH7WGJBGXH", "barcode_annotation.csv")
+# barcode_annotation <- here::here("data_raw", "210118_NB551334_0178_AH7YFLBGXH", "barcode_annotation.csv")
+
+# Parameters
+bc.len <- 8
+UMI.len <- 10
+UMI.cor <- 1
+threads <- 16
+
+# Genome, annotation file, and Index file
+genome <- here::here("data_raw", "NCBI_Reference", "GCF_000001405.40_GRCh38.p14_genomic.fna")
+genome.index <- here::here("data_raw", "Index", "GRCH_38")
+gff3 <- here::here("data_raw", "NCBI_Reference", "GCF_000001405.40_GRCh38.p14_genomic.gff")
+gtf <- here::here("data_raw", "NCBI_Reference", "GCF_000001405.40_GRCh38.p14_genomic.gtf")
+
+# Output folder and files, change output director etc when analyzing different read file
+out_dir <- "Aim1_210119_NCBI"
+combined_fastq <- file.path(out_dir, "trimmed.fastq.gz")
+aligned_bam <- file.path(out_dir, "aligned.bam")
+mapped_bam <- file.path(out_dir, "aligned.mapped.bam")
+
+# Raw reads: R1 corresponds to Trevseq R2 which has the transcript, R1 has barcode and UMI
+fq.transcript <- here::here("data_raw", "210119_NB551334_0179_AH7WGJBGXH", "fastq", "MultiplexRNASeq_S1_R2_001.fastq.gz")
+fq.barcode <- here::here("data_raw", "210119_NB551334_0179_AH7WGJBGXH", "fastq", "MultiplexRNASeq_S1_R1_001.fastq.gz")
+
+# Raw data for R1 and R2 are not currently in the Raw data folder but are written here to keep the narrative structure. Data can be retrieved from ENA for analysis
+
+# Analysis
+# Read structure; UMI Barcode bs2 = 0 bl2 = 8 us = 8 ul = 10
+#sc_trim_barcode(
+#  outfq = combined_fastq,
+#  r1 = fq.transcript,
+#  r2 = fq.barcode,
+#  read_structure = list(
+#    bs1 = -1, bl1 = 0,
+#    bs2 = 0, bl2 = 8,
+#   us = 8, ul = 10
+#  )
+#  )
+
+# Align reads
+#Rsubread::align(
+ # index = genome.index,
+ # readfile1 = combined_fastq,
+ # output_file = aligned_bam,
+ # nthreads = threads
+#)
+
+# Assigning reads to annotated exons
+#sc_exon_mapping(
+#  inbam = aligned_bam,
+#  outbam = mapped_bam,
+#  annofn = gff3,
+#  bc_len = bc.len,
+#  UMI_len = UMI.len,
+#  nthreads = threads
+#)
+
+# Demultiplex
+sc_demultiplex(
+  inbam = mapped_bam,
+  outdir = out_dir,
+  bc_anno = barcode_annotation,
+  has_UMI = TRUE,
+  nthreads = threads
+)
+
+# Gene counting
+sc_gene_counting(
+  outdir = out_dir,
+  bc_anno = barcode_annotation,
+  UMI_cor = 1
+)
+```
+
+---
+
+# Import and analyze RNAseq data
+```{r 'gene_counts',include=FALSE}
+#Reading in data and merging gene counts 
+data1 <- read.delim(here::here("data_processed", "Aim1_210118_NCBI", "gene_count.csv"),
+  header = TRUE,
+  sep = ","
+)
+
+
+data2 <- read.delim(here::here("data_processed", "Aim1_210119_NCBI", "gene_count.csv"), 
+  header = TRUE,
+  sep = ",")
+
+
+seqdata <- inner_join(data1, data2, by = 'gene_id')
+
+#Removing "x" from names of columns 
+names(seqdata)<-sapply(str_remove_all(colnames(seqdata),"X"),"[")
+```
+
+---
+
+## Sample Info
+```{r}
+#read in experimental variables
+targets <- read_tsv(here::here("data_processed", "targets.txt"))
+# use gt package to produce table of study desig
+gt(targets)
+```
+
+
+Data for the P1 isoform of RABV-P were included for the remainder of the analysis
+```{r select_samples, dependson = c('gene_counts')}
+seqdata<- subset(seqdata,select=c('gene_id',
+                                  '1a_IFN0hFLAG_1','1b_IFN0hFLAG_2','1c_IFN0hFLAG_3', 
+                                  '2a_IFN0hP1_1','2b_IFN0hP1_2','2c_IFN0hP1_3',
+                                  '4a_IFN1hFLAG_1','4b_IFN1hFLAG_2','4c_IFN1hFLAG_3',
+                                  '5a_IFN_1OFFhP1_1','5b_IFN_1OFFhP1_2','5c_IFN_1OFFhP1_3',
+                                  '7a_IFN_6OFFhFLAG_1','7b_IFN_6OFFhFLAG_2','7c_IFN_6OFFhFLAG_3',
+                                  '8a_IFN_6OFFhP1_1','8b_IFN_6OFFhP1_2','8c_IFN_6OFFhP1_3',
+                                  '10a_IFN_24ONFLAG_1','10b_IFN_24ONFLAG_2','10c_IFN_24ONFLAG_3',
+                                  '11a_IFN_24ONP1_1','11b_IFN_24ONP1_2','11c_IFN_24ONP1_3'))
+
+
+targets <- targets %>% dplyr::filter(Sample %in% c("1a_IFN0hFLAG_1","1b_IFN0hFLAG_2","1c_IFN0hFLAG_3",
+                                                     "2a_IFN0hP1_1","2b_IFN0hP1_2", "2c_IFN0hP1_3",                            
+                                                     "4a_IFN1hFLAG_1","4b_IFN1hFLAG_2","4c_IFN1hFLAG_3",
+                                                     "5a_IFN_1OFFhP1_1","5b_IFN_1OFFhP1_2","5c_IFN_1OFFhP1_3",
+                                                     "7a_IFN_6OFFhFLAG_1","7b_IFN_6OFFhFLAG_2","7c_IFN_6OFFhFLAG_3",
+                                                     "8a_IFN_6OFFhP1_1","8b_IFN_6OFFhP1_2","8c_IFN_6OFFhP1_3",
+                                                     "10a_IFN_24ONFLAG_1","10b_IFN_24ONFLAG_2","10c_IFN_24ONFLAG_3",
+                                                     "11a_IFN_24ONP1_1","11b_IFN_24ONP1_2","11c_IFN_24ONP1_3"))
+# gt(targets)
+```
+
+
+```{r paste_function, dependson = c('select_samples')}
+
+paste.factor <- function(..., sep = " "){
+  y <- list(...)
+  y <- lapply(y, function(x){
+    if(!is.factor(x)) x <- factor(x)
+    x
+  })
+  levels <- lapply(y, function(x) unique(c(levels(x), NA)))
+  levels <- apply(expand.grid(rev(levels))[, length(y):1, drop = FALSE], 1, paste, collapse = sep)
+  y.factor <- factor(do.call(what = "paste", args = c(y, sep = sep)), levels = levels)
+  droplevels(y.factor)
+}
+
+```
+
+Color to discern the various groups and conditions of the experiment
+```{r Colors, dependson = c('paste_function')}
+group <- paste.factor(targets$Protein, factor(targets$Time, levels = c("0hr", "1hr", "6hr", "24hr","24hr_OFF")), sep = "_")
+
+
+group.cols <- c(brewer.pal(8, "Blues")[3],brewer.pal(4, "BuGn")[3],brewer.pal(4, "YlOrRd")[3],
+                brewer.pal(8, "BrBG")[3],brewer.pal(3, "Greens")[3],brewer.pal(6, "Greys")[3],
+                brewer.pal(3, "Oranges")[3],brewer.pal(8, "OrRd")[3],brewer.pal(4, "PuBu")[3],
+                brewer.pal(3, "PuBuGn")[3],brewer.pal(6, "PuRd")[3],brewer.pal(8, "Purples")[3],
+                brewer.pal(6, "RdPu")[3],brewer.pal(8, "Reds")[3],brewer.pal(8, "YlGn")[3]) %>% magrittr::set_names(levels(group))
+
+Protein.cols <- brewer.pal(8, "Accent") %>% `[`(1:length(unique(targets$Protein))) %>% magrittr::set_names(unique(targets$Protein))
+
+Time.cols <- brewer.pal(8, "Set1") %>% `[`(1:length(unique(targets$Time))) %>% magrittr::set_names(unique(targets$Time))
+
+IFN.Cols <- c( "0hr"= "#feebe2","1hr"= "#fbb4b9","6hr" = "#f768a1","24hr"= "#c51b8a")
+```
+
+```{r edit_column_name}
+#Change first column to rowname 
+countdata <- seqdata[,-1]
+rownames(countdata) <- seqdata[,1]
+```
+
+## Annotation
+Gene Annotation data retrieved from org.Hs.eg.db (v 3.23) package. 
+
+```{r annotate_genes, include=FALSE}
+annotations <- AnnotationDbi::select (org.Hs.eg.db, 
+                       keys = rownames(countdata), 
+                       columns = c("ENTREZID","SYMBOL","GENENAME"))
+
+genes <- annotations %>%
+    dplyr::group_by(ENTREZID) %>%
+    as.data.frame() %>%
+    set_rownames(.$ENTREZID) %>%
+    .[rownames(countdata), ]
+```
+
+Next we make DGEList and export it for later use. DGEList is a specialized data structure that holds our raw count data and experimental design information. 
+```{r DGEList}
+myDGElist <- DGEList(counts = countdata, genes = genes[rownames(countdata), ], samples = targets)
+log2.cpm <- edgeR::cpm(myDGElist, log = TRUE, prior.count = 2)
+```
+
+```{r export_DGEList, dependson = c('DGEList')}
+write.csv(cbind(genes[rownames(countdata), ], countdata), file = here::here("results", "tables", "EntrezlID_counts.csv"), quote = FALSE, row.names = FALSE)
+
+write.csv(cbind(Sample = colnames(countdata), targets), file = here::here("results", "tables", "P1_samples.csv"), quote = FALSE, row.names = FALSE)
+```
+
+
+
+
+## QC 
+
+Library size
+```{r library_size, dependson = c('Colors'), fig.height = 7, fig.width = 12}
+# png(here::here("results", "figures", "library_size.png"), width = 1200, height = 800, res = 150)
+# pdf(here::here("results", "figures", "library_size.pdf"), width = 10, height = 7)
+
+par(mar = c(5, 4, 4, 2) + 0.1)
+
+unit <- 1e6
+lim.max <- ceiling(max(colSums(countdata)) / unit) * unit
+
+all.count.plot <- barplot(colSums(countdata),
+                          col = group.cols[as.character(group)], las = 2, cex.axis = 0.85,
+                          cex.names = 0.75, main = "Raw library size", xlab = "Samples by treatment groups",  ylim = c(0, lim.max),
+                          space = NULL,
+                          xaxt = "n", border = NA)
+
+# dev.off()
+```
+
+MDS plot
+```{r mds_raw, dependson= c('DGEList')}
+mds.raw <- plotMDS(log2.cpm, ndim = 8, plot = FALSE)
+```
+
+```{r mds_plot, dependson = c('mds_raw'), fig.height = 7, fig.width = 14}
+# pdf(file.path(figures_dir, "MDS_plot.pdf"), width = 10, height = 7)
+
+par(mfrow = c(1, 2))
+plotMDS(mds.raw, dim.plot = c(1,2), col = group.cols[as.character(group)],
+       # labels = samples$group,
+       pch = 16,
+        cex = 2,
+        # xlim = lim, ylim = lim,
+        main = "Raw MDS plot group"
+        )
+legend("bottom", legend = levels(group), pch = 16, col = group.cols, ncol = 1, pt.cex = 1)
+
+plotMDS(mds.raw, dim.plot = c(3,4), col =  group.cols[as.character(group)],
+       # labels = samples$group,
+       pch = 16,
+        cex = 2,
+        # xlim = lim, ylim = lim,
+        main = "Raw MDS plot group"
+        )
+legend("topleft", legend = levels(myDGElist$samples$group), pch = 16, col = group.cols, ncol = 1, pt.cex = 1)
+
+# legend("topleft", legend = levels(y$samples$group), pch = 16, col = group.cols, ncol = 1, pt.cex = 1)
+plotMDS(mds.raw, dim.plot = c(1,2), col = Protein.cols[myDGElist$samples$Protein],
+       # labels = samples$group,
+       pch = 16,
+        cex = 2,
+        # xlim = lim, ylim = lim,
+        main = "Raw MDS plot Proteins"
+        )
+legend("bottom", legend = names(Protein.cols), pch = 16, col = Protein.cols, ncol = 1, pt.cex = 1)
+
+plotMDS(mds.raw, dim.plot = c(3,4), col = Protein.cols[myDGElist$samples$Protein],
+       # labels = samples$group,
+       pch = 16,
+        cex = 2,
+        # xlim = lim, ylim = lim,
+        main = "Raw MDS plot Proteins"
+        )
+
+plotMDS(mds.raw, dim.plot = c(1,2), col = Time.cols[myDGElist$samples$Time],
+       # labels = samples$group,
+       pch = 16,
+        cex = 2,
+        # xlim = lim, ylim = lim,
+        main = "Raw MDS plot IFN treatment"
+        )
+legend("bottom", legend = names(Time.cols), pch = 16, col = Time.cols, ncol = 1, pt.cex = 1)
+
+plotMDS(mds.raw, dim.plot = c(3,4), col = Time.cols[myDGElist$samples$Time],
+       # labels = samples$group,
+       pch = 16,
+        cex = 2,
+        # xlim = lim, ylim = lim,
+        main = "Raw MDS plot IFN treatment"
+        )
+# dev.off()
+```
+
+## Filter data
+```{r 'filter_data' , dependson= c('DGEList')}
+#Filtering by expression 
+keep <- filterByExpr(myDGElist, group=group)
+myDGElist.filtered <- myDGElist[keep , , keep.lib.sizes = FALSE]
+log2.cpm.filtered <- edgeR::cpm(myDGElist.filtered, log = TRUE, prior.count = 2)
+```
+
+Density plot
+```{r 'density_plot_function'}
+# source("05_density_plot.R")
+density.plot <- function(expression, col, lwd = 2, ...){
+  densities <- apply(expression, 2, density)
+  high.peak <- which.max(sapply(densities, function(d) max(d$y))) 
+  
+  plot(densities[[high.peak]], 
+       type = "l", 
+       lwd = lwd,
+       col = col[high.peak],
+       ...
+  )
+  
+  for(i in (1:ncol(expression))[-high.peak]){
+    lines(densities[[i]], col = col[i], lwd = lwd)
+  }
+}
+```
+
+```{r 'density_plot', dependson=c('density_plot_function'), fig.height = 7, fig.width = 12 }
+#pdf(file.path(figures_dir, "Density_plot.pdf"), width = 10, height = 7)
+
+par(mfrow=c(1,2))
+
+density.plot(log2.cpm,  main = "A. Raw data density plot", col = group.cols[as.character(group)], xlab = expression("log"[2]*"(Counts per Million)"))
+legend("topright", legend = levels(group), lwd = 2, col = group.cols[levels(group)])
+
+density.plot(log2.cpm.filtered,  main = "B. Filtered data density plot", col = group.cols[as.character(group)], xlab = expression("log"[2]*"(Counts per Million)"))
+
+# dev.off()
+```
+
+## Normalization 
+```{r}
+method <- "TMM"
+
+myDGEList.norm <- calcNormFactors(myDGElist.filtered, method = method)
+log2.cpm.filtered.norm <- edgeR::cpm(myDGEList.norm, log = TRUE, prior.count = 2)
+log2.cpm.filtered.norm.relative <- log2.cpm.filtered.norm %>% subtract(apply(.[, group == levels(group)[1]], 1, mean))
+```
+
+Gene plot
+```{r}
+# source("06_gene_plot.R")
+
+# gene_plot
+gene.plot <- function(gene, groups = TRUE, full.expression = FALSE, raw.counts = FALSE,  ...){
+  display.group <- group
+  
+  if(full.expression){
+    display.group <- group
+    if(raw.counts){
+      data <- as.matrix(countdata)
+    } else {
+      data <- log2.cpm.filtered.norm
+    }
+  } else {
+    data <- log2.cpm.filtered.norm
+    
+  }
+  
+  if(full.expression){
+    gene.annotation <- genes
+  } else {
+    gene.annotation <- myDGElist$genes
+  }
+  
+  ylab <- expression("log"[2]*"(Counts per Million)")
+  if(raw.counts){
+    ylab <- "Counts"
+  }
+  
+  beeswarm::beeswarm(data[gene, groups] ~ droplevels(display.group[groups]),
+                     pwcol = group.cols[as.character(display.group)][groups],
+                     cex = 1.5,
+                     ylab = ylab,
+                     labels = sub("_", "\n", levels(droplevels(display.group[groups]))),
+                     xlab = "",
+                     las = 1, cex.axis = 1,
+                     main = gene.annotation[gene, "SYMBOL"],
+                     corral = "random", font.main = 4,
+                     ...
+  )
+  # abline(v = which(diff(as.integer(factor(sub("_.*", "", levels(experiment.group))))) != 0) + 0.5)
+}
+
+```
+
+```{r fig.height = 7, fig.width = 14}
+# pdf(file.path(figures_dir, "Gene_plot.pdf"), width = 10, height = 7)
+
+par(mfrow = c(1, 1))
+of.interest <- c("STAT1","NTS", "ISG15", "IRF1")
+
+for(goi in of.interest){
+  id <- with(myDGElist$genes, ENTREZID[match(goi, SYMBOL)])
+  if(!is.na(id)){
+    gene.plot(id, rbe = NA, cex.axis = 1)
+  }
+}
+
+# dev.off()
+```
+
+## Design, VOOM transformation and Linear model fit 
+```{r}
+design <- model.matrix(~0 + group)%>%
+set_colnames(sub("group", "", colnames(.)))
+```
+
+VOOM transformation 
+```{r}
+v <- voom(myDGEList.norm, design, plot = FALSE, save.plot = TRUE)
+```
+
+Linear model fit 
+```{r}
+fit <- lmFit(v, design, plot =TRUE)
+```
+
+VOOM plot
+```{r  fig.height = 7, fig.width = 12}
+
+# pdf(file.path(figures_dir, "Voom_plot.pdf"), width = 10, height = 7)
+
+# Your original code:
+par(mfrow = c(1, 2))
+with(v$voom.xy, plot(x, y, xlab = expression("log"[2]*"(count size + 0.5)"), ylab = expression(sqrt("standard deviation")), pch = 16, cex = 0.25))
+title("voom: Mean-variance trend")
+lines(v$voom.line, col = "blue")
+
+# Add a trendline to the SA plot
+plotSA(fit, ylab = expression(sqrt("sigma")), main = "Final model: Mean-variance trend")
+
+# Extract the data used in plotSA
+sa_data <- data.frame(AvgLogExpr = fit$Amean, SqrtSigma = sqrt(fit$sigma))
+
+# Sort the data by average log-expression
+sa_data <- sa_data[order(sa_data$AvgLogExpr), ]
+
+# Add a LOWESS trend line
+lines(lowess(sa_data$AvgLogExpr, sa_data$SqrtSigma), col = "red", lwd = 2)
+
+# dev.off()
+
+```
+
+Box plot
+```{r fig.height = 7, fig.width = 12}
+
+pdf(file.path(figures_dir, "Box_plot.pdf"), width = 20, height = 10)
+
+par(mfrow=c(1,2), mar=c(12, 4, 4, 2))
+boxplot(log2.cpm.filtered.norm, col = group.cols[as.character(group)],  xlab="", ylab="Log2 counts per million",las=2,main="normalized logCPM")
+## Let's add a blue horizontal line that corresponds to the median logCPM
+
+boxplot(v$E, col = group.cols[as.character(group)], xlab="", ylab="Log2 counts per million",las=2,main="Voom transformed logCPM")
+## Let's add a blue horizontal line that corresponds to the median logCPM
+abline(h=median(v$E),col="blue")
+
+dev.off()
+```
+
+Contrast
+```{r}
+cont.matrix <- makeContrasts(
+                  
+                    P1_0hr.v.FLAG_0hr = P1_0hr - FLAG_0hr,
+                 
+                    FLAG_1hr.v.FLAG_0hr = FLAG_1hr - FLAG_0hr,
+                    FLAG_6hr.v.FLAG_0hr = FLAG_6hr - FLAG_0hr,
+                    FLAG_24hr.v.FLAG_0hr = FLAG_24hr - FLAG_0hr,
+                    
+                    
+                    P1_1hr.v.FLAG_0hr =  P1_1hr - FLAG_0hr,
+                    P1_6hr.v.FLAG_0hr = P1_6hr - FLAG_0hr,
+                    P1_24hr.v.FLAG_0hr = P1_24hr - FLAG_0hr,
+                    
+                    
+                     levels = design
+                 )
+
+contrast.type <- list(
+                     v = "\\.v\\." ,
+                     Basal_P1 = "P1_0hr.v.FLAG_0hr",
+                     IFN_Regulation = "FLAG_(1|6|24)hr(\\_OFF)?\\.v\\.FLAG_0hr",
+                     P1_IFN = "P1_(1|6|24)hr(\\_OFF)?\\.v\\.FLAG_0hr",
+                     Comparison_1hr = "(FLAG_1hr\\.v\\.FLAG_0hr|P1_1hr\\.v\\.FLAG_0hr)",
+                     Comparison_6hr = "(FLAG_6hr\\.v\\.FLAG_0hr|P1_6hr\\.v\\.FLAG_0hr)",
+                     Comparison_24hr = "(FLAG_24hr\\.v\\.FLAG_0hr|P1_24hr\\.v\\.FLAG_0hr)"
+
+                 ) %>%
+                lapply(grepl,colnames(cont.matrix))
+```
+
+---
+
+# Differential gene expression analysis
+```{r 'treat_fc'}
+treat.fc <- 1.2
+```
+
+```{r 'glmQLFTest', dependson= c('lmFit', 'contrasts', 'treat_fc')}
+fit2 <- contrasts.fit(fit, cont.matrix) %>% treat(lfc = log2(treat.fc))
+fit2.eBayes <- contrasts.fit(fit, cont.matrix) %>% eBayes()
+```
+
+```{r}
+results <- decideTests(fit2, method = "separate", adjust.method = "BH", p.value = 0.05)
+summary(results)
+
+results.summary <-summary(results)
+```
+
+Create data frames, classify if genes were affected or unaffected and then export to excel file
+```{r}
+# Create dataframe 
+
+# Define the style for rounding
+round.style <- createStyle(numFmt = "0.000")
+
+# Define the columns to extract from topTreat
+tt.cols <- c("logFC", "P.Value", "adj.P.Val") # add "t" if you want t values for DecoulpeR analysis
+
+# Generate a list of topTreat results for each contrast
+tt.list <- lapply(colnames(cont.matrix), function(coef) {
+  topTreat(fit2, coef, genelist = NULL, number = Inf, sort.by = "none") %>% `[`(, tt.cols)
+}) %>%
+  set_names(colnames(cont.matrix))
+
+# Define the types and their corresponding contrasts
+types <- list(
+              P1_Expression = contrast.type$Basal_P1,
+              IFN_Regulation = contrast.type$IFN_Regulation,
+              Modulation = contrast.type$P1_IFN,
+              All_comparisons = contrast.type$v,
+              One_hour = contrast.type$Comparison_1hr,
+              Six_hours = contrast.type$Comparison_6hr,
+              TwentyFour_hours = contrast.type$Comparison_24hr
+)
+
+# Create a named list to store dataframes for each type
+dataframes_list <- list()
+
+# Iterate over each type and generate the corresponding dataframe
+for (type.name in names(types)) {
+  ct <- types[[type.name]]
+  tt.merge <- do.call(what = "cbind", tt.list[ct]) %>%
+    `[`(, order(rep(1:length(tt.cols), length.out = ncol(.))))
+  res <- results[, ct] %>%
+    set_colnames(paste(colnames(.), "Results", sep = "."))
+  tt.merge <- cbind(fit2$genes, AveExpr = fit2$Amean, tt.merge, res)
+
+  # Store the dataframe in the list
+  dataframes_list[[type.name]] <- tt.merge
+}
+
+# Iterate over the dataframes_list and create individual dataframe objects
+for (name in names(dataframes_list)) {
+  df <- dataframes_list[[name]]
+  
+  # Assign the dataframe to a variable with the same name as the type
+  assign(name, df)
+}
+
+
+# classify_genes
+# Function to classify genes based on conditions
+classify_genes <- function(dataframe) {
+  dataframe$Classification <- "Background"  # Initialize all rows with "Background"
+  
+  # Treatment Induced Genes (dataframe[, 11] == 1)
+  dataframe$Classification[dataframe[, 11] == 1 & dataframe[, 12] == 1 & abs(dataframe[, 6] - dataframe[, 5]) < 0.5] <- "Unaffected"
+  dataframe$Classification[dataframe[, 11] == 1 & dataframe[, 12] == 1 & (dataframe[, 5] - dataframe[, 6]) > 0.5] <- "Antagonized"
+  dataframe$Classification[dataframe[, 11] == 1 & dataframe[, 12] == 0] <- "Antagonized"
+  dataframe$Classification[dataframe[, 11] == 1 & dataframe[, 12] == 1 & (dataframe[, 6] - dataframe[, 5]) > 0.5] <- "Enhanced"
+  
+  # Treatment Suppressed Genes (dataframe[, 11] == -1)
+  dataframe$Classification[dataframe[, 11] == -1 & dataframe[, 12] == -1 & abs(dataframe[, 6] - dataframe[, 5]) < 0.5] <- "Unaffected"
+  dataframe$Classification[dataframe[, 11] == -1 & dataframe[, 12] == -1 & (dataframe[, 6] - dataframe[, 5]) > 0.5] <- "Antagonized"
+  dataframe$Classification[dataframe[, 11] == -1 & dataframe[, 12] == 0] <- "Antagonized"
+  dataframe$Classification[dataframe[, 11] == -1 & dataframe[, 12] == 1] <- "Antagonized"
+  dataframe$Classification[dataframe[, 11] == -1 & dataframe[, 12] == -1 & (dataframe[, 5] - dataframe[, 6]) > 0.5] <- "Enhanced"
+  
+  return(dataframe)
+}
+
+# Add classification labels to selected dataframes before export
+for (name in c("One_hour", "Six_hours", "TwentyFour_hours")) {
+  if (name %in% names(dataframes_list)) {
+    dataframes_list[[name]] <- classify_genes(dataframes_list[[name]])
+  }
+}
+
+# Export as excel file 
+
+# Initialize workbook
+wb <- createWorkbook()
+
+# Iterate over existing dataframes and export to Excel
+for (type.name in names(dataframes_list)) {
+  tt.merge <- dataframes_list[[type.name]]
+  
+  # ===== Export to Excel =====
+  addWorksheet(wb, type.name)
+  writeData(wb, type.name, tt.merge, colNames = TRUE)
+  
+  # Bold headers
+  addStyle(wb, type.name, createStyle(textDecoration = "bold"), 
+           rows = 1, cols = 1:ncol(tt.merge))
+  
+  # Conditional formatting: AveExpr (color scale)
+  addStyle(wb, type.name, style = round.style, 
+           cols = grep("AveExpr", colnames(tt.merge)), 
+           rows = 1 + 1:nrow(tt.merge), stack = TRUE)
+  conditionalFormatting(wb, type.name, 
+                        cols = grep("AveExpr", colnames(tt.merge)), 
+                        rows = 1 + 1:nrow(tt.merge),
+                        style = rev(RColorBrewer::brewer.pal(3, "RdYlBu")), 
+                        type = "colourScale")
+  
+  # Conditional formatting: logFC columns
+  max.abs <- 3
+  for (i in grep("logFC", colnames(tt.merge))) {
+    conditionalFormatting(wb, type.name, cols = i, rows = 1 + 1:nrow(tt.merge),
+                          style = rev(RColorBrewer::brewer.pal(3, "RdBu")),
+                          rule = max.abs * (-1:1),
+                          type = "colourScale")
+    addStyle(wb, type.name, style = round.style, cols = i, 
+             rows = 1 + 1:nrow(tt.merge), stack = TRUE)
+  }
+  
+  # Conditional formatting: Results columns
+  conditionalFormatting(wb, type.name, 
+                        cols = grep("Results", colnames(tt.merge)), 
+                        rows = 1 + 1:nrow(tt.merge), 
+                        rule = -1:1,
+                        style = rev(RColorBrewer::brewer.pal(3, "RdBu")), 
+                        type = "colourScale")
+  
+  # Conditional formatting: P-values
+  conditionalFormatting(wb, type.name, 
+                        cols = grep("P.Val", colnames(tt.merge)), 
+                        rows = 1 + 1:nrow(tt.merge), 
+                        rule = "<0.05",
+                        style = createStyle(bgFill = brewer.pal(4, "Pastel2")[4]), 
+                        type = "expression")
+
+  # Conditional formatting: Classification labels
+  class_col <- grep("^Classification$", colnames(tt.merge))
+  if (length(class_col) > 0) {
+    conditionalFormatting(wb, type.name,
+                          cols = class_col,
+                          rows = 1 + 1:nrow(tt.merge),
+                          rule = "Enhanced",
+                          style = createStyle(bgFill = "#C6EFCE", fontColour = "#006100"),
+                          type = "contains")
+    conditionalFormatting(wb, type.name,
+                          cols = class_col,
+                          rows = 1 + 1:nrow(tt.merge),
+                          rule = "Antagonized",
+                          style = createStyle(bgFill = "#F4CCCC", fontColour = "#990000"),
+                          type = "contains")
+    conditionalFormatting(wb, type.name,
+                          cols = class_col,
+                          rows = 1 + 1:nrow(tt.merge),
+                          rule = "Unaffected",
+                          style = createStyle(bgFill = "#D9EAD3", fontColour = "#274E13"),
+                          type = "contains")
+    conditionalFormatting(wb, type.name,
+                          cols = class_col,
+                          rows = 1 + 1:nrow(tt.merge),
+                          rule = "Background",
+                          style = createStyle(bgFill = "#EDEDED", fontColour = "#666666"),
+                          type = "contains")
+  }
+}
+
+# Save workbook
+saveWorkbook(wb, file.path(tables_dir, "Differentially_expressed_genes.xlsx"), overwrite = TRUE)
+
+# Create individual dataframe objects in environment (optional)
+for (name in names(dataframes_list)) {
+  assign(name, dataframes_list[[name]])
+}
+
+```
+
+```{r 'save_DFs'}
+save("P1_Expression", file = file.path(results_dir, "baseline_expression.RData"))
+save("One_hour", file = file.path(results_dir, "One_hour.RData"))
+save("Six_hours", file = file.path(results_dir, "Six_hours.RData"))
+save("TwentyFour_hours", file = file.path(results_dir, "TwentyFour_hours.RData"))
+```
+
+The number of genes up or down regulated following IFN treatment at 1 h, 6 h and 24 h time points 
+```{r 'barplots', message=FALSE}
+# bar plot function for individual time points 
+# source("07_barplot.R")
+library(ggpubr)
+library(cowplot)
+# Bar plot function to visualize the number of Differentially expressed genes following OSM treatment 
+# Define a function to generate the barplot from a given data frame
+plot_DE_summary <- function(df, timepoint_label) {
+  # Extract 11th column (decideTests output)
+  status_col <- df[[11]]
+  
+  # Count 1s and -1s
+  count_df <- as.data.frame(table(status_col)) %>%
+    dplyr::filter(status_col %in% c("-1", "1")) %>%
+    mutate(status_col = factor(status_col, levels = c("-1", "1"),
+                               labels = c("Downregulated", "Upregulated")))
+  
+  colnames(count_df) <- c("Regulation", "Count")
+  
+  # Create bar plot
+  p <- ggpubr::ggbarplot(count_df,
+                         x = "Regulation",
+                         y = "Count",
+                         fill = "Regulation",
+                         color = "black",
+                         label = TRUE,
+                         lab.pos = "out",
+                         lab.col = "black",
+                         orientation = "vertical",
+                         palette = c("Upregulated" = "#ff6361", "Downregulated" = "#ffa600")) +
+    theme_classic() +
+    theme(legend.position = "none",
+          plot.title = element_text(hjust = 0.7, face = "bold")) +
+    labs(title = timepoint_label, x = NULL, y = NULL)
+  
+  return(p)
+}
+
+```
+
+```{r, include=FALSE}
+# Generate plots
+p1 <- plot_DE_summary(One_hour, "1 hour")
+p2 <- plot_DE_summary(Six_hours, "6 hours")
+p3 <- plot_DE_summary(TwentyFour_hours, "24 hours")
+
+# detach("package:ggpubr", unload=TRUE)
+
+#plot_grid(p1, p2, p3, nrow = 1)
+barplot_combined <- plot_grid(p1, p2, p3, nrow = 1)
+barplot_combined
+ggsave(filename = file.path(figures_dir, "Barplots-IFN expressed genes.png"), plot = barplot_combined, dpi = 600, width = 7.5, height = 4)
+
+dev.off()
+
+```
+
+
+```{r}
+# bar plot for all time points 
+# source("23_barplot_all.R")
+plot_DE_All_summary <- function(df, timepoint_label, 
+                                cols = c(27, 28, 29),
+                                custom_labels = NULL) {
+  
+  library(dplyr)
+  library(tidyr)
+  
+  # Subset selected columns
+  sub_df <- df[, cols]
+  
+  # If custom labels provided, assign them
+  if (!is.null(custom_labels)) {
+    if (length(custom_labels) != ncol(sub_df)) {
+      stop("Length of custom_labels must match number of selected columns")
+    }
+    colnames(sub_df) <- custom_labels
+  }
+  
+  # Convert to long format
+  long_df <- sub_df %>%
+    mutate(Gene = rownames(sub_df)) %>%
+    pivot_longer(-Gene, names_to = "Comparison", values_to = "status_col") 
+
+    long_df$Comparison <- factor(long_df$Comparison, levels = custom_labels)
+  
+  # Count -1 and 1 per column
+  count_df <- long_df %>%
+    filter(status_col %in% c(-1, 1)) %>%
+    group_by(Comparison, status_col) %>%
+    summarise(Count = n(), .groups = "drop") %>%
+    mutate(Regulation = factor(status_col,
+                               levels = c(-1, 1),
+                               labels = c("Downregulated", "Upregulated")))
+  
+  # Plot
+  p <- ggpubr::ggbarplot(count_df,
+                         x = "Comparison",
+                         y = "Count",
+                         fill = "Regulation",
+                         color = "black",
+                         label = TRUE,
+                         lab.pos = "out",
+                         lab.col = "black",
+                         palette = c("Upregulated" = "#ff6361",
+                                     "Downregulated" = "#ffa600"),
+                         position = position_dodge()) +
+    theme_classic() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.text.y = element_text(face = "bold"),
+      axis.title.y = element_text(face = "bold")) +
+    labs(title = timepoint_label, x = NULL, y = "")
+  
+  return(p)
+}
+```
+
+
+
+
+## Barplot : Number of IFN induced genes - \textcolor{red}{Figure 1A}
+```{r, message=FALSE}
+# png(file.path(figures_dir, "DGE_following_IFN_summary.png"), width = 1800, height = 1200, res = 300)
+# pdf(file.path(figures_dir, "Barplot_DEGs.pdf"), width = 6, height = 4)
+
+
+ plot_DE_All_summary(
+  All_comparisons,
+  "",
+  cols = c(27, 28, 29),
+  custom_labels = c("1 hour", "6 hours", "24 hours")
+)
+
+# dev.off()
+```
+
+---
+
+# Temporal difference in IRG expression
+Determine whether the genes up-regulated or down regulated  following 1 h 6 h and 24 h IFN treatment have similar gene profiles
+```{r, message=FALSE}
+# source("08_venn.R")
+library(ggvenn)
+```
+
+## Venn diagram : Overlap of ISGs post 1h, 6h, 24h post IFN treatment - \textcolor{red}{Figure 1B}
+```{r}
+# Prepare the data for ggvenn
+venn_data <- list(
+  "One Hour" = One_hour[One_hour[, 11] == 1, "SYMBOL"],
+  "Six Hours" = Six_hours[Six_hours[, 11] == 1, "SYMBOL"],
+  "Twenty Four Hours" = TwentyFour_hours[TwentyFour_hours[, 11] == 1, "SYMBOL"]
+)
+
+# Create the Venn diagram using ggvenn
+venn_gg <- ggvenn::ggvenn(
+  venn_data,
+  fill_color = c("#fbb4b9", "#f768a1", "#c51b8a"),
+  stroke_size = 1,
+  set_name_size = 0,
+  text_size = 3
+)
+
+# Display the Venn diagram
+venn_gg
+
+# Assuming venn_gg is your ggvenn plot object
+# ggsave(filename = file.path(figures_dir, "VennDiagram_upregulated.png"), plot = # venn_gg,
+#       width = 6, height = 6, units = "in", dpi = 300)
+
+# ggsave(filename = file.path(figures_dir, "VennDiagram_upregulated.pdf"), plot = venn_gg,
+#       width = 6, height = 6, units = "in")
+```
+
+**IFN-Downregulated** genes
+```{r}
+# Prepare the data for ggvenn
+venn_data <- list(
+  "One Hour" = One_hour[One_hour[, 11] == -1, "SYMBOL"],
+  "Six Hours" = Six_hours[Six_hours[, 11] == -1, "SYMBOL"],
+  "Twenty Four Hours" = TwentyFour_hours[TwentyFour_hours[, 11] == -1, "SYMBOL"]
+)
+
+# Create the Venn diagram using ggvenn
+venn_gg_supressed <- ggvenn(
+  venn_data,
+  fill_color = c("#fbb4b9", "#f768a1", "#c51b8a"),
+  stroke_size = 1,
+  set_name_size = 4,
+  text_size = 3
+)
+
+# Display the Venn diagram
+venn_gg_supressed
+
+# Assuming venn_gg is your ggvenn plot object
+ggsave(filename = file.path(figures_dir, "VennDiagram_downregulated.png"), plot = venn_gg_supressed,
+       width = 6, height = 6, units = "in", dpi = 300)
+
+ggsave(filename = file.path(figures_dir, "VennDiagram_downregulated.pdf"), plot = venn_gg_supressed,
+       width = 6, height = 6, units = "in")
+
+```
+```{r}
+detach("package:ggvenn", unload=TRUE)
+```
+
+
+
+
+Gene expression profiles of differentially expressed genes following IFN treatment at 0 h, 1 h, 6 h and 24 h time points with and without RABV-P expression
+```{r}
+# source("09_heatmap.R")
+
+library(pheatmap)
+
+# heatmap
+heat.map.of.interest <- function(data, chosen, subset = TRUE,
+                                 scale = "none", cluster_cols = FALSE, scale.max = NULL, labels_row = myDGElist$genes$SYMBOL, pdf_file = NULL,fontsize = 40, fontsize_row = 40, fontsize_col = 40, ...) {
+  
+  # Subset the data matrix
+  data %<>% `[`(chosen, subset)
+  
+  # Set the color palette for the heatmap
+  colours <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(100)
+  
+  # Adjust the color breaks if scale.max is provided 
+  if (!is.null(scale.max)) {
+    breaks <- seq(-scale.max, scale.max, length.out = 101)
+    colours <- colorRampPalette(rev(brewer.pal(7, "RdBu")))(100)
+  } else {
+    breaks <- NA
+  }
+  
+  # Create the annotation data frame
+  annotation_col <- data.frame(
+    Protein = myDGElist$samples$Protein[subset],
+    IFN_Treatment = myDGElist$samples$Time[subset], 
+    row.names = colnames(data)
+  )
+  
+  # Set the desired order for the IFN_Treatment factor levels
+  desired_order <- c("0hr", "1hr", "6hr", "24hr")  # replace with actual desired order
+  annotation_col$IFN_Treatment <- factor(annotation_col$IFN_Treatment, levels = desired_order)
+  
+  # Define the annotation colors
+  annotation_colors <- list(
+    Protein = Protein.cols,
+    IFN_Treatment = IFN.Cols[desired_order]
+  )
+  
+  
+  # Create the heatmap using pheatmap
+  data %>%
+    pheatmap(
+      cluster_rows = TRUE,
+      cluster_cols = cluster_cols,
+      show_colnames = FALSE,
+      annotation_col = annotation_col,
+      annotation_colors = annotation_colors,
+      border_color = NA,
+      breaks = breaks,
+      color = colours,
+      labels_row = labels_row[chosen],
+      scale = scale,
+      fontsize = fontsize,           # Adjust overall font size (affects legend)
+      fontsize_row = fontsize_row,   # Adjust row label font size
+      fontsize_col = fontsize_col,  
+      ...
+    )
+  
+}
+
+```
+
+## Heatmap: Global expression patterns of ISGs with RABV-P - \textcolor{red}{Figure 1C}
+```{r fig.width= 9}
+heat.map.of.interest(log2.cpm.filtered.norm.relative, 
+chosen = apply(results[, contrast.type$v] != 0, 1, any), 
+subset = order(myDGElist$samples$Protein), 
+scale.max = 4, 
+show_rownames = FALSE, 
+main = "",
+fontsize = 10,           # Adjust overall font size (affects legend)
+fontsize_row = 10,   # Adjust row label font size
+fontsize_col = 10,
+)
+```
+
+RE ordered by Protein group ( FLAG vs P1 )
+```{r , include=FALSE, dev = "png"}
+ png(file.path(figures_dir, "IFN_Heatmap_font.png"), width = 11, height = 11)
+heat.map.of.interest(log2.cpm.filtered.norm.relative, 
+                     chosen = apply(results[, contrast.type$v] != 0, 1, any),
+                     subset = order(myDGElist$samples$Protein), 
+                     cluster_cols = FALSE, scale.max = 4, 
+                     show_rownames = FALSE,
+                     main = "Changed versus FLAG",
+                     fontsize = 15,        # Adjusts the general font size
+                     fontsize_row = 15,    # Adjusts the row label font size
+                     fontsize_col = 15 )
+dev.off()
+```
+
+
+```{r, include=FALSE}
+# png(file.path(figures_dir, "IFN_Heatmap_font.png"), width = 11 * 100, height = 11 * 100, res = 100)
+pdf(file.path(figures_dir, "Heatmap_DEG.pdf"), width = 8, height = 9)
+
+heat.map.of.interest(log2.cpm.filtered.norm.relative,
+                    chosen = apply(results[, contrast.type$v] != 0, 1, any),
+                    subset = order(myDGElist$samples$Protein),
+                    cluster_cols = FALSE, scale.max = 4,
+                    show_rownames = FALSE,
+                    main = "",
+                    fontsize = 15,
+                    fontsize_row = 15,
+                    fontsize_col = 15)
+dev.off()
+
+```
+
+
+```{r, include=FALSE}
+#png("osm_Reordered_group_vs_FLAG.png", width = 8, height = 11, units = "in", res = 600)
+heatmap <- heat.map.of.interest(log2.cpm.filtered.norm.relative, 
+                     chosen = apply(results[, contrast.type$v] != 0, 1, any),
+                     subset = order(myDGElist$samples$Protein), 
+                     cluster_cols = FALSE, 
+                     scale.max = 4, 
+                     show_rownames = FALSE, 
+                     main = "",
+                     fontsize = 15, 
+                     fontsize_row = 15,    
+                     fontsize_col = 15 )
+#dev.off()
+
+```
+
+```{r}
+detach("package:pheatmap", unload=TRUE)
+```
+
+
+Proportion of Affected genes
+```{r, message=FALSE}
+# source("12_pie_chart.R")
+
+library(ggrepel)
+library(patchwork)
+
+
+create_pie_chart <- function(dataframe, title, custom_colors, direction = 1) {
+  
+  # Filter rows dynamically using the user-supplied osm value
+  filtered_data <- dataframe[
+    dataframe[, 11] == direction & dataframe$Classification != "Background",
+  ]
+  
+  # Count classifications
+  classification_counts <- as.data.frame(table(filtered_data$Classification))
+  colnames(classification_counts) <- c("Classification", "Count")
+  
+  # Calculate proportions and label positions
+  classification_counts$Proportion <- round((classification_counts$Count / sum(classification_counts$Count)) * 100, 1)
+  
+  classification_counts <- classification_counts %>%
+    mutate(
+      csum = rev(cumsum(rev(Count))),
+      pos  = Count / 2 + lead(csum, 1),
+      pos  = if_else(is.na(pos), Count / 2, pos)
+    )
+  
+  # Create pie chart
+  pie_chart <- ggplot(classification_counts, aes(x = "", y = Count, fill = Classification)) +
+    geom_col(width = 1, color = "white") +
+    coord_polar(theta = "y") +
+    theme_void() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 10),
+      legend.position = "right",
+      plot.margin = margin(2, 2, 2, 2)
+    ) +
+    labs(title = title, fill = "Classification") +
+    scale_fill_manual(values = custom_colors) +
+    geom_label_repel(
+      data = classification_counts,
+      aes(y = pos, label = paste0(Proportion, "%")),
+      size = 4.5,
+      nudge_x = 1,
+      show.legend = FALSE
+    )
+  
+  return(pie_chart)
+}
+
+# Define custom colors for classifications
+custom_colors <- c("Unaffected" = "grey", "Antagonized" = "#de425b", "Enhanced" = "#488f31")
+```
+
+
+## Pie chart: Proportion of ISGs antagonized/unaffected/Enhanced by RABV-P - \textcolor{red}{Figure 1 J-L}
+
+```{r 'Pie_up-regulated genes'}
+pie_chart_One_hour <- create_pie_chart(One_hour, "One hour", custom_colors, direction = 1)
+pie_chart_Six_hours <- create_pie_chart(Six_hours, "Six hours", custom_colors, direction = 1)
+pie_chart_TwentyFour_hours <- create_pie_chart(TwentyFour_hours, "Twenty Four hours", custom_colors, direction = 1)
+
+# Assemble the pie charts into a single figure
+pie_chart <- pie_chart_One_hour + pie_chart_Six_hours + pie_chart_TwentyFour_hours +
+plot_annotation(title = "")
+
+# Display the combined figure
+pie_chart
+
+#Assuming venn_gg is your ggvenn plot object
+# ggsave(filename = file.path(figures_dir, "PieChart_Upregulated.png"), plot = pie_chart,
+#       width = 10, height = 6, units = "in", dpi = 300)
+
+ggsave(filename = file.path(figures_dir, "PieChart_Upregulated.pdf"), plot = pie_chart,
+       width = 10, height = 6, units = "in")
+```
+
+
+
+
+
+
+IFN **down-regulated** genes affected by RABV-P
+```{r 'Pie_down-regulated genes'}
+pie_chart_One_hour_down <- create_pie_chart(One_hour, "One hour", custom_colors, direction = -1)
+pie_chart_Six_hours_down <- create_pie_chart(Six_hours, "Six hours", custom_colors, direction = -1)
+pie_chart_TwentyFour_hours_down <- create_pie_chart(TwentyFour_hours, "Twenty Four hours", custom_colors, direction = -1)
+
+# Assemble the pie charts into a single figure
+pie_chart2 <- pie_chart_One_hour_down + pie_chart_Six_hours_down + pie_chart_TwentyFour_hours_down +
+plot_annotation(title = "")
+
+# Display the combined figure
+# pie_chart2
+
+#Assuming venn_gg is your ggvenn plot object
+# ggsave(filename = file.path(figures_dir, "PieChart_downregulated.png"), plot = pie_chart2,
+  #     width = 10, height = 6, units = "in", dpi = 300)
+
+ggsave(filename = file.path(figures_dir, "PieChart_downregulated.pdf"), plot = pie_chart2,
+       width = 10, height = 6, units = "in")
+
+```
+
+```{r}
+# source("13_parallel.R")
+
+library(GGally)
+library(ggplotify)
+create_parallel_plot <- function(dataframe, title, custom_colors, direction = 1) {
+  
+  # Filter based on direction (1 = induced, -1 = suppressed)
+  filtered_data <- dataframe[dataframe[, 11] == direction &
+                               dataframe$Classification != "Background", ]
+  
+  # Rename columns for better display
+  colnames(filtered_data)[5] <- "FLAG + IFN"
+  colnames(filtered_data)[6] <- "IFN + P1"
+  
+  # Add a baseline control column
+  filtered_data$Control <- 0
+  
+  # Build parallel coordinate plot
+  ggparcoord(data = filtered_data,
+             columns = c(ncol(filtered_data), 5, 6),  # Control, FLAG+IFN, IFN+P1
+             groupColumn = "Classification",
+             alphaLines = 1,
+             scale = "globalminmax",
+             showPoints = TRUE) +
+    geom_point(aes(text = SYMBOL), size = 3) +
+    theme_bw() +
+    labs(title = title, x = "", y = "Log2Fold Change") +
+    scale_color_manual(values = custom_colors) +
+    theme(
+      text = element_text(size = 14),
+      axis.text = element_text(size = 8, face = "bold"),
+      axis.title = element_text(size = 8, face = "bold"),
+      plot.title = element_text(size = 8, face = "bold"),
+      legend.text = element_text(size = 8),
+      legend.title = element_text(size = 8),
+      legend.position = "none",
+      aspect.ratio = 0.9
+    )
+}
+
+```
+
+
+IFN **up-regulated** genes
+```{r}
+parallel_plot_One_hour_up <- create_parallel_plot(One_hour, "One Hour", custom_colors, direction = 1)
+parallel_plot_Six_hours_up <- create_parallel_plot(Six_hours, "Six Hours", custom_colors, direction = 1)
+parallel_plot_TwentyFour_hours_up <- create_parallel_plot(TwentyFour_hours, "Twenty Four hours", custom_colors, direction = 1)
+```
+
+IFN **down-regulated** genes
+```{r}
+parallel_plot_One_hour_down <- create_parallel_plot(One_hour, "One Hour", custom_colors, direction = -1)
+parallel_plot_Six_hours_down <- create_parallel_plot(Six_hours, "Six Hours", custom_colors, direction = -1)
+parallel_plot_TwentyFour_hours_down <- create_parallel_plot(TwentyFour_hours, "Twenty four Hours", custom_colors, direction = -1)
+```
+
+## Parallel coordinate plot : RABV-P affected/unaffected/Enhanced ISGs - \textcolor{red}{Figure 1D-I}
+```{r, fig.height = 12, fig.width=12}
+combined_plot <- parallel_plot_One_hour_up + parallel_plot_Six_hours_up + parallel_plot_TwentyFour_hours_up + 
+parallel_plot_One_hour_down + parallel_plot_Six_hours_down + parallel_plot_TwentyFour_hours_down + 
+plot_layout(ncol = 3)
+
+ggsave(filename = file.path(figures_dir, "combined_parallel_plots.pdf"),
+       plot = combined_plot,
+       width = 12,
+       height = 8)
+```
+
+All the component for **Figure 1** are produced and exported as Pdf to be edited using *affinity designer* 
+
+
+
+## Volcano plot: Differentially expressed ISGs
+```{r}
+library(EnhancedVolcano)
+```
+
+At 1 h ,6h and 24 h post IFN treatment respectively 
+```{r fig.height=6}
+ # volcano1 <- 
+  EnhancedVolcano(
+  One_hour,
+  lab = One_hour$SYMBOL,
+  x = 'FLAG_1hr.v.FLAG_0hr.logFC',
+  y = 'FLAG_1hr.v.FLAG_0hr.adj.P.Val',
+  title = '1h IFN Treatment',
+  subtitle = NULL,
+  xlab = 'Log2 Fold Change',
+  ylab = '-Log10 Adjusted P-value',
+  pCutoff = 0.01,
+  FCcutoff = 0.5,
+  pointSize = 2.0,
+  labSize = 3.5,
+  col = c('grey30', 'green', '#BE684D', 'red'),  # NS, down, up, both
+  colAlpha = 0.9,
+  drawConnectors = TRUE,
+  max.overlaps = 20,
+  legendLabels = c('NS', 'Log2FC', 'Adjusted p-value', 'Both'),
+  legendPosition = 'top',
+  border = 'full',
+  gridlines.major = FALSE,
+  gridlines.minor = FALSE,
+  boxedLabels = FALSE
+)
+
+# ggsave(
+#  filename = file.path(figures_dir, "Volcano_plot_1h.pdf"),
+#  plot = volcano1,
+#  device = cairo_pdf,   # ensures proper font embedding
+#  width = 7,            # inches (PNAS 2-column width)
+#  height = 7,           # adjust as needed
+#  units = "in"
+# )
+
+```
+
+```{r fig.height=7}
+# volcano2 <-
+EnhancedVolcano(
+  Six_hours,
+  lab = Six_hours$SYMBOL,
+  x = 'FLAG_6hr.v.FLAG_0hr.logFC',
+  y = 'FLAG_6hr.v.FLAG_0hr.adj.P.Val',
+  title = '6h IFN Treatment',
+  subtitle = NULL,
+  xlab = 'Log2 Fold Change',
+  ylab = '-Log10 Adjusted P-value',
+  pCutoff = 0.01,
+  FCcutoff = 0.5,
+  pointSize = 2.0,
+  labSize = 3.5,
+  col = c('grey30', 'green', '#BE684D', 'red'),  # NS, down, up, both
+  colAlpha = 0.9,
+  drawConnectors = TRUE,
+  max.overlaps = 20,
+  legendLabels = c('NS', 'Log2FC', 'Adjusted p-value', 'Both'),
+  legendPosition = 'top',
+  border = 'full',
+  gridlines.major = FALSE,
+  gridlines.minor = FALSE,
+  boxedLabels = FALSE
+)
+
+#ggsave(
+#  filename = file.path(figures_dir, "Volcano_plot_6h.pdf"),
+#  plot = volcano2,
+#  device = cairo_pdf,   # ensures proper font embedding
+#  width = 7,            # inches (PNAS 2-column width)
+#  height = 7,           # adjust as needed
+#  units = "in"
+# )
+
+```
+
+```{r fig.height=7}
+# volcano3 <- 
+  EnhancedVolcano(
+  TwentyFour_hours,
+  lab = TwentyFour_hours$SYMBOL,
+  x = 'FLAG_24hr.v.FLAG_0hr.logFC',
+  y = 'FLAG_24hr.v.FLAG_0hr.adj.P.Val',
+  title = '24h IFN Treatment',
+  subtitle = NULL,
+  xlab = 'Log2 Fold Change',
+  ylab = '-Log10 Adjusted P-value',
+  pCutoff = 0.01,
+  FCcutoff = 0.5,
+  pointSize = 2.0,
+  labSize = 3.5,
+  col = c('grey30', 'green', '#BE684D', 'red'),  # NS, down, up, both
+  colAlpha = 0.9,
+  drawConnectors = TRUE,
+  max.overlaps = 20,
+  legendLabels = c('NS', 'Log2FC', 'Adjusted p-value', 'Both'),
+  legendPosition = 'top',
+  border = 'full',
+  gridlines.major = FALSE,
+  gridlines.minor = FALSE,
+  boxedLabels = FALSE # set to true for bozed labels which makes figure look better but takes up SPACE
+)
+
+#ggsave(
+#  filename = file.path(figures_dir, "Volcano_plot_24h.pdf"),
+#  plot = volcano3,
+#  device = cairo_pdf,   # ensures proper font embedding
+#  width = 7,            # inches (PNAS 2-column width)
+#  height = 7,           # adjust as needed
+#  units = "in"
+# )
+
+
+```
+
+
+```{r , fig.width=12, include=FALSE}
+# library(grid)
+# library(gridExtra)
+
+# pdf(file.path(figures_dir, "volcano_plots_combined.pdf"), width = 20, height = 10)
+# grid.arrange(volcano1, volcano2,volcano3,
+#    ncol=3,
+#    top = textGrob('',
+#      just = c('center'),
+#      gp = gpar(fontsize = 7)))
+
+# dev.off()
+
+# using ggplot for the same figure
+# Combine the three plots using plot_grid. Here we combine them in one column:
+#combinedPlot <- plot_grid(v1, v2, v3, labels = c("A", "B", "C"), ncol = 1)
+
+# Save the combined figure to a PNG file
+#ggsave("Combined_EnhancedVolcano.png", combinedPlot, width = 10, height = 25, dpi = 600)
+```
+
+---
+
+# Functional annotation and enrichment analysis
+```{r 'gene_set_parameters'}
+msigdb.gsets <- c("h", "c2", "c3", "c5", "c7")
+
+msigdb.descriptions <- c("Hallmark gene sets",
+                         "Curated gene sets",
+                         "Motif gene sets",
+                         "GO gene sets",
+                         "immunologic gene sets")
+names(msigdb.descriptions) <- msigdb.gsets
+
+kegg.exclude <- "all"
+```
+
+Here **$gs_collection** and **$gs_subcollection`** replace **&gs_cat** and **$gs_subcat**
+**collection$ncbi_gene** replaces **collection$entrez_gene**
+```{r 'gene_sets'}
+library(msigdbr)
+
+msigdb.Hs <- msigdbr(species = "Homo sapiens")
+
+msigdb.Hs.split <- msigdb.Hs %>%
+    split(f = paste(.$gs_collection, .$gs_subcollection, sep = "_")) %>%
+    set_names(sub("_$", "", names(.)))
+
+names(msigdb.Hs.split)[names(msigdb.Hs.split) %in% c("C5_BP", "C5_CC", "C5_MF")] %<>% sub(pattern = "C5_", replacement = "C5_GO:")
+
+
+# c("C1",
+# "C2_CGP", "C2_CP", "C2_CP:BIOCARTA", "C2_CP:KEGG", "C2_CP:PID", "C2_CP:REACTOME",
+# "C3_MIR:MIR_Legacy", "C3_MIR:MIRDB", "C3_TFT:GTRD", "C3_TFT:TFT_Legacy",
+# "C4_CGN", "C4_CM",
+# "C5_BP", "C5_CC", "C5_MF", 
+# "C6", "C7", "H")
+
+msigdb.Hs.lists <- lapply(msigdb.Hs.split, function(collection) split(x = collection$ncbi_gene, f = collection$gs_name))             
+
+min.size <- 5
+
+msigdb.index.lists <- lapply(msigdb.Hs.lists, function(collection){
+                            lapply(collection, function(gs) which(myDGEList.norm$genes$ENTREZID %in% gs)) %>% `[`(lengths(.) >= min.size)
+                        })  
+```
+
+```{r 'camera'}
+collections <-   names(msigdb.index.lists) #  c("H", "C2_CP:REACTOME", "C5_BP", "C3_TFT:GTRD", "C7") #
+ camera.results <- list()
+  
+# collections <- c("h", "c2.REACTOME", "c5.BP", "c3", "c7") # names(gs.annots)
+ y.disp <- estimateDisp(myDGEList.norm, design, robust = TRUE)
+ camera.results <- list()
+  for(contrast in colnames(cont.matrix)){
+    camera.results[[contrast]] <- lapply(collections, function(gs){
+      
+      camera.run <- cameraPR(fit2.eBayes$t[, contrast], msigdb.index.lists[[gs]], sort = FALSE)  %>% # camera(y.disp, msigdb.index.lists[[gs]], design, cont.matrix[,contrast], sort = FALSE) %>% #
+       transform(
+        score = sign(as.numeric(factor(Direction)) - 1.5) * -log10(FDR),
+        avg.logFC = sapply(msigdb.index.lists[[gs]], function(x) mean(fit2$coefficients[x, contrast]))
+      )
+    
+    if(gs %in% c("H", "C2_CP:REACTOME", "C5_GO:BP", "C3_TFT:GTRD", "C3_TFT:TFT_Legacy")){
+      
+      signed.rank.matrix <- rank(fit2$p.value[, contrast]) * unclass(results)[, contrast]
+      
+      camera.run %<>% transform(sig.Genes = t(sapply(msigdb.index.lists[[gs]], function(x){
+        sr <- signed.rank.matrix[x]
+        gs.genes <- as.character(myDGEList.norm$genes$SYMBOL[x])[sr != 0]
+        sr %<>% magrittr::extract(. != 0)
+        
+        # Gene symbols ordered by P-value
+        significant.genes <- gs.genes[order(abs(sr))]
+        
+        # Separate into significantly up and down gene symbols ordered by P-value
+        significant.up <- unique(significant.genes[sr[order(abs(sr))] > 0])
+        significant.down <- unique(significant.genes[sr[order(abs(sr))] < 0])
+        significant.genes %<>% unique
+        
+        # Trim the top overall significant.genes for display purposes
+        if(length(significant.genes) > 5){
+          significant.genes <- c(head(significant.genes, 5), "...")
+        }
+        # Return the resulting genes
+        c(
+          Top = paste(significant.genes, collapse = ";"),
+          Up = paste(significant.up, collapse = ";"),
+          Down = paste(significant.down, collapse = ";")
+        )
+      })))
+      
+    }
+    
+      camera.run
+      
+    }) %>% set_names(collections)
+  }
+```
+
+```{r `save_camera}
+types <- list(
+  One_hour = contrast.type$Comparison_1hr,
+  Six_hours = contrast.type$Comparison_6hr,
+  TwentyFour_hours = contrast.type$Comparison_24hr
+)
+         
+for(collection in c("H", "C2_CP:REACTOME", "C5_GO:BP", "C3_TFT:GTRD", "C3_TFT:TFT_Legacy")){
+  camera.cols <- c("avg.logFC", "PValue", "FDR", "Results", "sig.Genes.Up", "sig.Genes.Down")
+  
+  wb <- createWorkbook()
+  round.style <- createStyle(numFmt = "0.000")
+  p.style <- createStyle(numFmt = "SCIENTIFIC")
+  
+  gs.names <- names(msigdb.index.lists[[collection]])
+  
+  camera.write.list <- lapply(camera.results, function(x){
+    if("Direction" %in% colnames(x[[collection]])) {
+      x[[collection]] %>% 
+        transform(Results = ifelse(Direction == "Up", 1, -1) * (FDR < 0.05)) %>% 
+        `[`(gs.names, )
+    } else {
+      warning(paste("'Direction' column not found in collection:", collection))
+      NULL
+    }
+  })
+  
+  for(type.name in names(types)){
+    ct <- types[[type.name]]
+    camera.merge <-  do.call(what = "cbind", lapply(camera.write.list[ct], "[", , camera.cols)) %>% `[`(, order(rep(1:length(camera.cols), length.out = ncol(.))))
+    camera.merge <- cbind(
+                          Set.Size = lengths(msigdb.Hs.lists[[collection]][gs.names]),
+                          Genes.Expressed = lengths(msigdb.index.lists[[collection]][gs.names]),
+                          camera.merge)
+    addWorksheet(wb, type.name)
+    
+    Gene.Set <- c("https://www.gsea-msigdb.org/gsea/msigdb/index.jsp", paste0("https://www.gsea-msigdb.org/gsea/msigdb/cards/", gs.names, ".html"))
+    names(Gene.Set) <- c("MSigDB.Gene.Set", gs.names)
+    class(Gene.Set) <- "hyperlink"
+    
+    final.columns <- c(names(Gene.Set)[1], colnames(camera.merge))
+    writeData(wb, sheet = type.name, x = Gene.Set, startCol = 1)
+    writeData(wb, type.name, camera.merge, colNames = TRUE, startCol = 2) #, withFilter = TRUE)
+    
+    addStyle(wb, type.name, createStyle(textDecoration = "bold"), rows = 1, cols = 1:length(final.columns))
+    non.header <- 1 + 1:length(gs.names)
+    
+    conditionalFormatting(wb, type.name, cols = grep("Set.Size|Genes.Expressed", final.columns), rows = non.header,
+                          style = (RColorBrewer::brewer.pal(3, "Greens")), type = "colourScale")
+    
+    max.abs <- 1 # max(abs(camera.merge[, c(grep("logFC", colnames(camera.merge)))]))
+    
+    for(i in grep("logFC", final.columns)){
+      conditionalFormatting(wb, type.name, cols = i, rows = non.header,
+                            style = rev(RColorBrewer::brewer.pal(3, "RdBu")),
+                            rule = max.abs * (-1:1),
+                            type = "colourScale")
+      addStyle(wb, type.name, style = round.style, cols = i, rows = non.header, stack = TRUE)
+    }
+    
+    conditionalFormatting(wb, type.name, cols = grep("Results", final.columns), rows = non.header, rule = -1:1,
+                          style = rev(RColorBrewer::brewer.pal(3, "RdBu")), type = "colourScale")
+    
+    for(i in grep("P\\.*Val|FDR", final.columns)){
+      conditionalFormatting(wb, type.name, cols = i, rows = non.header, rule = "<0.05",
+                            style = createStyle(bgFill = brewer.pal(4, "Pastel2")[4]), type = "expression")
+      addStyle(wb, type.name, style = p.style, cols = i, rows = non.header, stack = TRUE)
+    }
+    
+  }
+    saveWorkbook(wb,
+                 file.path(
+                 tables_dir,   
+                 paste("Reworking_camera", make.names(collection),  
+                       "gene_set_tests.xlsx", sep = "_")), 
+                 overwrite = TRUE)
+  }
+
+rm(wb, camera.write.list, camera.merge)
+```
+
+```{r 'camera_results_functions'}
+## Display some of these results
+## Table
+# Function to get the top n gene sets from the camera results 
+# Order by rank column; reverse if direction = -1
+topCamera <- function(results, set, contrast, n = 5, rank = "PValue", direction = 1, up.down = "Both"){
+  data <- results[[contrast]][[set]] %>% magrittr::extract(order(direction*magrittr::extract(.,,rank)), !(colnames(.) %in% c("score", "sig.Genes.Up", "sig.Genes.Down"))) %>% `[`(up.down == "Both" | .$Direction == up.down,) %>% head(n = n)
+  return(data)
+}
+
+#topCamera("h", 1) ## 1 = results of first contrast in contrasts
+
+#kable(topCamera("h", 1), digits = c(0, 0, 50, 50, 3, 0))
+
+
+## Bar plot function
+
+## Bar plot function
+topBarPlot <- function(results, set, contrast, n = 25, rank = "PValue", direction = 1, up.down = "Both",
+                       fdr.cutoff = 0.05, hide.insignificant = FALSE, logFC.max = 2,
+                       both.lim = T, both.width = T, xlim.scale = (4/3), n.mid = 45, n.long = 65,
+                       left.mar = 17,
+                       top.up.and.down = F,
+                       main = NULL, legend.position = "bottomright", ...){
+  
+  # Get the top results and reverse order, so that most significant genes sets will be at the top on the plot
+  data <- topCamera(results, set, contrast, n, rank, direction, up.down) %>% magrittr::extract(nrow(.):1, )
+  
+  if(up.down == "Both" & top.up.and.down){
+    data <- topCamera(results, set, contrast, n, rank, direction, up.down = "Down") %>% magrittr::extract(nrow(.):1, )
+    data %<>% rbind(topCamera(results, set, contrast, n, rank, direction, up.down = "Up")  %>% magrittr::extract(nrow(.):1, ))
+  }
+  
+  
+  # If hide.insignificant, remove those less than the suppled FDR cut-off
+  if(!is.na(fdr.cutoff) & hide.insignificant){
+    data <- data[data$FDR < fdr.cutoff,]
+  }
+  
+  # If there is any data left to plot
+  if(!is.na(fdr.cutoff) & sum(data$FDR < fdr.cutoff) > 0){
+    
+    # Adjust margins, extra long on the left (second position), to accommodate gene set labels
+    # Could adjust this
+    par(mar=c(4, left.mar, 4, 2) + 0.1)
+    
+    ## Make a colour scale going from -logFC.max to logFC.max by steps of 0.1
+    if(logFC.max < 0.1){
+      logFC.max <- 0.1
+    }
+    sequence <- seq(0.1, logFC.max, 0.1)
+    colour.scale <- colorRampPalette(rev(brewer.pal(11,"RdYlBu")))(2*length(sequence))
+    # Replace values outside the range with the max (or negative max)
+    avg.logFC <- data$avg.logFC %>% pmin(logFC.max) %>% pmax(-logFC.max)
+    # Replace values with colours by cutting the values into bins defined by breaks
+    # Include lowest to capture any avg.logFC == -logFC.max
+    avg.logFC.col <- cut(avg.logFC, breaks = c(-rev(sequence), 0, sequence), labels = colour.scale, include.lowest = TRUE)
+    
+    xlim <- c(0, xlim.scale * max(-log10(data$FDR)))
+    if(up.down != "Both"){
+      xlim <- c(0, xlim.scale * -log10(topCamera(results, set, contrast, n=1)$FDR))
+    }
+    
+    ## Basic R barplot function
+    # Plot barcode and store positions of all bars
+    positions <- barplot(
+      # bar length is -log10(FDR)
+      -log10(data$FDR),
+      # Width is relative gene set size
+      # Maybe this should be scaled better
+      width = data$NGenes,
+      # expression for making nicely formatted axis label
+      xlab = expression("\U2212log"[10]*"(adjusted "*italic(p)*"-value)"),
+      # Rotate bar plot and 
+      horiz = TRUE,
+      col = as.character(avg.logFC.col),
+      # Set x-axis limits to be slightly more than the longest bar, so a legend can be accommodated
+      # Could adjust this
+      xlim = xlim,
+      # Any other supplied graphical parameter arguments passed
+      ...
+    )
+    
+    # Add labels afterwards
+    # Attempt to scale gene set label sizes so they fit on the plot properly
+    # This is not ideal
+    # May need to adjust some of these numbers
+    
+    # Choose some size
+    # Number of characters for mid-length and long labels
+
+    # Minimum ratio of gene set size to the sum of the gene set sizes
+    size.min <- 0.01
+    
+    # Start with a common size value
+    cex.names <- rep(0.75, nrow(data))
+    # Make smaller labels
+    cex.names[nchar(rownames(data)) > n.mid] <- 0.55
+    cex.names[data$number/sum(data$number) < size.min] <- 0.55
+    cex.names[nchar(rownames(data)) > n.long] <- 0.45
+    
+    # Gene set names are stored in row names
+    labels <- rownames(data)
+    
+    # For long labels, find the middle underscore character in the label and insert a new line character
+    labels[nchar(rownames(data)) > n.long] %<>% sapply(function(long.label){
+      middle.underscore <- gregexpr("_",long.label) %>% unlist %>% magrittr::extract(ceiling(length(.)/2))
+      paste(substr(long.label, 1, middle.underscore), substr(long.label, middle.underscore + 1, nchar(long.label)), sep = "\n")
+    })
+    
+    # Add labels next to the bars
+    mtext(labels,
+          # Left hand side = 2
+          side = 2,
+          # Make sure the labels are horizontal
+          las = 1,
+          # Use saved bar positions
+          at = positions,
+          # Offset labels slightly from bars
+          line = 0.2,
+          # Use appropriate label sizes
+          cex = cex.names
+    )
+    
+    # Title of the plot
+    if(is.null(main)){
+      main <- paste(set, contrast)
+    }
+    title(main = main)
+    
+    # Add an optional dashed line at the FDR cut-off
+    if(!is.na(fdr.cutoff) & !hide.insignificant){
+      abline(v = -log10(fdr.cutoff), lty = 2, lwd = 1.5)
+    }
+    
+    if(!is.null(legend.position)){
+      
+      legend(legend.position,
+             # Legend title
+             title = "avg logFC",
+             # Legend values
+             legend = c(paste("≥", logFC.max), paste(">", logFC.max*c(0.5, 0.25)), paste("<", -logFC.max*c(0.25, 0.5)), paste("≤", -logFC.max)),
+             # Square with border symbol
+             pch = 22,
+             # Border colour
+             col = "black",
+             # Fill colour
+             pt.bg = colour.scale[c(length(colour.scale), match(as.character(logFC.max*c(0.5, 0.25, -0.25, -0.5, -1)), c(-rev(sequence), 0, sequence)))],
+             # Symbol size
+             pt.cex = 1.5
+      )
+    }
+  }
+}
+```
+
+```{r 'camera_top_bar_plots',fig.height = 6, fig.width = 10, eval = TRUE}
+# pdf(file.path(figures_dir, "GSEA_barplots_pathway_enrichment_plots.pdf"), width = 12, height = 8)  # Adjust width and height as needed
+for(set in c("H", "C2_CP:REACTOME", "C5_GO:BP")){ # names(msigdb.index.lists)
+  for(contrast in colnames(cont.matrix)[contrast.type$v]){
+      topBarPlot(camera.results, set, contrast, n = 10,up.down = "Up" ,main = paste(set, contrast), left.mar = 20)
+  }
+}
+# dev.off()
+```
+
+
+
+### Barplots : IFN activated pathways antagonized/unaffected by RABV-P- Figure 2A-C
+
+```{r, fig.width=14, fig.height=8}
+# library(dplyr)
+# library(RColorBrewer)
+# library(magrittr)
+
+# Get top n gene sets from a camera result table
+topCamera <- function(results, set, contrast, n = 5, rank = "PValue", direction = 1, up.down = "Both") {
+  data <- results[[contrast]][[set]] %>%
+    magrittr::extract(
+      order(direction * magrittr::extract(., , rank)),
+      !(colnames(.) %in% c("score", "sig.Genes.Up", "sig.Genes.Down"))
+    ) %>%
+    `[`(up.down == "Both" | .$Direction == up.down, ) %>%
+    head(n = n)
+
+  data
+}
+
+# Build union of top n gene sets from two contrasts
+# FLAG determines the order; P1 follows that order
+unionTopCamera <- function(results,
+                           set = "H",
+                           contrast1,
+                           contrast2,
+                           n = 10,
+                           rank = "PValue",
+                           direction = 1,
+                           up.down = "Up") {
+
+  top1 <- topCamera(results, set, contrast1, n = n, rank = rank, direction = direction, up.down = up.down)
+  top2 <- topCamera(results, set, contrast2, n = n, rank = rank, direction = direction, up.down = up.down)
+
+  union_sets <- unique(c(rownames(top1), rownames(top2)))
+
+  # Full tables for each contrast
+  df1 <- results[[contrast1]][[set]][union_sets, , drop = FALSE]
+  df2 <- results[[contrast2]][[set]][union_sets, , drop = FALSE]
+
+  # Add pathway names as column
+  df1 <- data.frame(pathway = rownames(df1), df1, row.names = NULL, check.names = FALSE)
+  df2 <- data.frame(pathway = rownames(df2), df2, row.names = NULL, check.names = FALSE)
+
+  # Remove any accidental duplicates
+  df1 <- df1[!duplicated(df1$pathway), , drop = FALSE]
+  df2 <- df2[!duplicated(df2$pathway), , drop = FALSE]
+
+  # Sort df1 (FLAG) by significance (lowest FDR = most significant)
+  df1 <- df1[order(df1$FDR, na.last = TRUE), , drop = FALSE]
+
+  # Match df2 (P1) to the exact same pathway order as df1
+  # This ensures P1 follows FLAG ordering for direct comparison
+  pathway_order <- df1$pathway
+  df2 <- df2[match(pathway_order, df2$pathway), , drop = FALSE]
+
+  # Keep only rows that matched
+  keep <- !is.na(df2$pathway)
+  df1 <- df1[keep, , drop = FALSE]
+  df2 <- df2[keep, , drop = FALSE]
+
+  # Set row names for plotting
+  rownames(df1) <- make.unique(df1$pathway)
+  rownames(df2) <- rownames(df1)
+
+  list(flag = df1, p1 = df2)
+}
+
+# Plot one barplot panel
+plot_union_bar <- function(data,
+                           main = NULL,
+                           fdr.cutoff = 0.05,
+                           hide.insignificant = FALSE,
+                           logFC.max = 2,
+                           xlim.scale = 4 / 3,
+                           left.mar = 20,
+                           n.mid = 45,
+                           n.long = 65,
+                           ...) {
+
+  if (nrow(data) == 0) {
+    message("No gene sets to plot.")
+    return(invisible(NULL))
+  }
+
+  if (!is.na(fdr.cutoff) && hide.insignificant) {
+    data <- data[data$FDR < fdr.cutoff, , drop = FALSE]
+  }
+
+  if (nrow(data) == 0) {
+    message("No gene sets remain after filtering.")
+    return(invisible(NULL))
+  }
+
+  # Reverse the order so the most significant pathway appears at the top of the barplot
+  data <- data[nrow(data):1, , drop = FALSE]
+
+  par(mar = c(4, left.mar, 4, 2) + 0.1)
+
+  if (logFC.max < 0.1) {
+    logFC.max <- 0.1
+  }
+
+  sequence <- seq(0.1, logFC.max, 0.1)
+  colour.scale <- colorRampPalette(rev(brewer.pal(11, "RdYlBu")))(2 * length(sequence))
+
+  avg.logFC <- data$avg.logFC %>% pmin(logFC.max) %>% pmax(-logFC.max)
+  avg.logFC.col <- cut(
+    avg.logFC,
+    breaks = c(-rev(sequence), 0, sequence),
+    labels = colour.scale,
+    include.lowest = TRUE
+  )
+
+  xlim <- c(0, xlim.scale * max(-log10(data$FDR), na.rm = TRUE))
+  if (!is.na(fdr.cutoff) && !hide.insignificant) {
+    xlim <- c(0, max(xlim[2], xlim.scale * -log10(fdr.cutoff)))
+  }
+
+  widths <- if ("NGenes" %in% colnames(data)) {
+    data$NGenes
+  } else if ("number" %in% colnames(data)) {
+    data$number
+  } else {
+    rep(1, nrow(data))
+  }
+
+  positions <- barplot(
+    -log10(data$FDR),
+    width = widths,
+    xlab = expression(-log[10] * "(adjusted " * italic(p) * "-value)"),
+    horiz = TRUE,
+    col = as.character(avg.logFC.col),
+    xlim = xlim,
+    ...
+  )
+
+  labels <- data$pathway
+
+  cex.names <- rep(0.75, nrow(data))
+  cex.names[nchar(labels) > n.mid] <- 0.55
+  if ("number" %in% colnames(data)) {
+    cex.names[data$number / sum(data$number) < 0.01] <- 0.55
+  }
+  cex.names[nchar(labels) > n.long] <- 0.45
+
+  long_idx <- nchar(labels) > n.long
+  if (any(long_idx)) {
+    labels[long_idx] <- sapply(labels[long_idx], function(long.label) {
+      underscore_pos <- gregexpr("_", long.label)[[1]]
+      if (length(underscore_pos) == 1 && underscore_pos[1] == -1) {
+        return(long.label)
+      }
+      mid_pos <- underscore_pos[ceiling(length(underscore_pos) / 2)]
+      paste(
+        substr(long.label, 1, mid_pos),
+        substr(long.label, mid_pos + 1, nchar(long.label)),
+        sep = "\n"
+      )
+    })
+  }
+
+  mtext(
+    labels,
+    side = 2,
+    las = 1,
+    at = positions,
+    line = 0.2,
+    cex = cex.names
+  )
+
+  if (is.null(main)) {
+    main <- ""
+  }
+  title(main = main)
+
+  if (!is.na(fdr.cutoff) && !hide.insignificant) {
+    abline(v = -log10(fdr.cutoff), lty = 2, lwd = 1.5)
+  }
+
+  legend(
+    "bottomright",
+    title = "avg logFC",
+    legend = c(
+      paste("≥", logFC.max),
+      paste(">", logFC.max * c(0.5, 0.25)),
+      paste("<", -logFC.max * c(0.25, 0.5)),
+      paste("≤", -logFC.max)
+    ),
+    pch = 22,
+    col = "black",
+    pt.bg = colour.scale[c(
+      length(colour.scale),
+      match(
+        as.character(logFC.max * c(0.5, 0.25, -0.25, -0.5, -1)),
+        c(-rev(sequence), 0, sequence)
+      )
+    )],
+    pt.cex = 1.5
+  )
+
+  invisible(data)
+}
+
+# Plot FLAG and P1 side by side with same row ordering
+unionBarPlotPair <- function(results,
+                             set = "H",
+                             contrast1,
+                             contrast2,
+                             n = 10,
+                             rank = "PValue",
+                             direction = 1,
+                             up.down = "Up",
+                             fdr.cutoff = 0.05,
+                             hide.insignificant = FALSE,
+                             logFC.max = 2,
+                             left.mar = 20,
+                             ...) {
+
+  pair_data <- unionTopCamera(
+    results = results,
+    set = set,
+    contrast1 = contrast1,
+    contrast2 = contrast2,
+    n = n,
+    rank = rank,
+    direction = direction,
+    up.down = up.down
+  )
+
+  old_par <- par(no.readonly = TRUE)
+  on.exit(par(old_par), add = TRUE)
+
+  par(mfrow = c(1, 2))
+
+  plot_union_bar(
+    pair_data$flag,
+    main = contrast1,
+    fdr.cutoff = fdr.cutoff,
+    hide.insignificant = hide.insignificant,
+    logFC.max = logFC.max,
+    left.mar = left.mar,
+    ...
+  )
+
+  plot_union_bar(
+    pair_data$p1,
+    main = contrast2,
+    fdr.cutoff = fdr.cutoff,
+    hide.insignificant = hide.insignificant,
+    logFC.max = logFC.max,
+    left.mar = left.mar,
+    ...
+  )
+
+  invisible(pair_data)
+}
+
+# Example calls for the three time points
+
+ pdf(file.path(figures_dir, "Union_GSEA_barplots.pdf"), width = 13, height = 6)  # Adjust width and height as needed
+
+unionBarPlotPair(
+  camera.results,
+  set = "H",
+  contrast1 = "FLAG_1hr.v.FLAG_0hr",
+  contrast2 = "P1_1hr.v.FLAG_0hr",
+  n = 10,
+  up.down = "Up",
+  left.mar = 20
+)
+
+unionBarPlotPair(
+  camera.results,
+  set = "H",
+  contrast1 = "FLAG_6hr.v.FLAG_0hr",
+  contrast2 = "P1_6hr.v.FLAG_0hr",
+  n = 10,
+  up.down = "Up",
+  left.mar = 20
+)
+
+unionBarPlotPair(
+  camera.results,
+  set = "H",
+  contrast1 = "FLAG_24hr.v.FLAG_0hr",
+  contrast2 = "P1_24hr.v.FLAG_0hr",
+  n = 10,
+  up.down = "Up",
+  left.mar = 20
+)
+
+dev.off()
+```
+
+---
+
+# Transcription factor prediction and analysis
+
+Following differential gene expression analysis the promoter regions of differentially expressed ISGs (defined as regions within -1500bp downstream and 500bp upstream  of transcription start sites) were used to investigate the over-representation of transcription factor binding motifs using genes. For background genes that were expressed but unchanged following IFN treatment were used as reference. Initial analysis was done using the CiiiDER software (https://ciiider.erc.monash.edu/index.html),the code below was used to produce the plots illustrated in this manuscript . The CiiiDER software with the **human GRCh38.94 genome** and the **2020 JASPAR core non-redundant vertebrate matrices** was used to predict transcription factor binding sites and perform enrichment of differentially expressed transcription factors. Promoter regions for the differentially expressed genes spanning 1,500 bases upstream and 500 bases downstream from the predicted transcriptional start site were used for the analysis. The Match algorithm was used to predict transcription factor binding sites; the significance of over and underrepresented transcription factors was calculated using Fishers exact test (p <0.01 and test statistic > 0).Genes that were expressed but unchanged following IFN treatment were used as background reference. 
+
+
+Read in CiiiDER output **Bed files** for ISGs
+```{r}
+# Define the file paths for your BED files
+bed_files <- list(
+
+"One_Antagonized_bed" = "data_processed/CiiiDER_Predictions/bed/IFN-Induced-Antagonized-1hr_CurrentSites.bed",
+"One_Unaffected_bed"  =  "data_processed/CiiiDER_Predictions/bed/IFN-Induced-Unaffected-1hr_CurrentSites.bed",
+  
+    
+"Six_Antagonized_bed" = "data_processed/CiiiDER_Predictions/bed/IFN-Induced-Antagonized-6hr_CurrentSites.bed",
+"Six_unaffected_bed"  = "data_processed/CiiiDER_Predictions/bed/IFN-Induced-Unaffected-6hr_CurrentSites.bed",
+  
+
+"Twentyfour_Antagonized_bed" = "data_processed/CiiiDER_Predictions/bed/IFN-Induced-Antagonized-24hr_CurrentSites.bed",
+"Twentyfour_Unaffected_bed"  =  "data_processed/CiiiDER_Predictions/bed/IFN-Induced-Unaffected-24hr_CurrentSites.bed",
+
+
+"P0hr_bed" = "data_processed/CiiiDER_Predictions/bed/P-Induced-genes-0hr_CurrentSites.bed"
+
+)
+
+# Read and process each BED file
+bed_data_list <- lapply(bed_files, function(bed_file) {
+  bed_data <- rtracklayer::import(bed_file, format = "BED")
+  bed_df <- as.data.frame(bed_data) %>%
+    separate(name, into = c("ID", "Gene"), sep = "\\|")
+  return(bed_df)
+})
+
+# Assign each processed BED data frame to a separate variable for easy reference
+list2env(bed_data_list, envir = .GlobalEnv)
+```
+```{r}
+One_hour_Unaff_deficit <- read.csv("data_processed/CiiiDER_Predictions/deficit/IFN-Induced-Unaffected-1hr_MostSigDeficit.csv",check.names = FALSE, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+One_hour_ANT_deficit <- read.csv("data_processed/CiiiDER_Predictions/deficit/IFN-Induced-Antagonized-1hr_MostSigDeficit.csv",check.names = FALSE, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+Six_hour_Unaff_deficit <- read.csv("data_processed/CiiiDER_Predictions/deficit/IFN-Induced-Unaffected-6hr_MostSigDeficit.csv",check.names = FALSE, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+Six_hour_ANT_deficit <- read.csv("data_processed/CiiiDER_Predictions/deficit/IFN-Induced-Antagonized-6hr_MostSigDeficit.csv",check.names = FALSE, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+TwentyFour_hour_Unaff_deficit <- read.csv("data_processed/CiiiDER_Predictions/deficit/IFN-Induced-Unaffected-24hr_MostSigDeficit.csv",check.names = FALSE, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+TwentyFour_hour_ANT_deficit <- read.csv("data_processed/CiiiDER_Predictions/deficit/IFN-Induced-Antagonized-24hr_MostSigDeficit.csv",check.names = FALSE, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+```
+
+
+```{r}
+source("scripts/18_Rename_columns.R")
+```
+
+```{r}
+One_hour_Unaff_deficit <- rename_columns(One_hour_Unaff_deficit)
+One_hour_ANT_deficit   <- rename_columns(One_hour_ANT_deficit)
+Six_hour_Unaff_deficit <- rename_columns(Six_hour_Unaff_deficit)
+Six_hour_ANT_deficit   <- rename_columns(Six_hour_ANT_deficit)
+TwentyFour_hour_ANT_deficit  <- rename_columns(TwentyFour_hour_ANT_deficit)
+TwentyFour_hour_Unaff_deficit <- rename_columns(TwentyFour_hour_Unaff_deficit)
+```
+
+### Barplot : Predicted TFs and Number of genes they regulate - \textcolor{red}{Figure 3A-F }
+```{r}
+ggplot(One_hour_Unaff_deficit %>% 
+       arrange(desc(Significance)) %>% 
+       head(10) %>%
+       mutate(TF = reorder(TF, Significance))) +
+  aes(x = IRGs, y = TF) +
+  geom_col(fill = "grey", color = "black") +
+  labs(
+    title = "1 hour",
+    subtitle = "Unaffected",
+    x = "Number of Regulated Genes",
+    y = "Transcription Factor"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 16),  
+    axis.text.x = element_text(size = 16),  
+    axis.title.x = element_text(hjust =0.5 ,size = 16, face = "bold"),
+    axis.title.y = element_text(hjust = 0.75, size = 16, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 19, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+ggplot(One_hour_ANT_deficit %>% 
+       arrange(desc(Significance)) %>% 
+       head(10) %>%
+       mutate(TF = reorder(TF, Significance))) +
+  aes(x = IRGs, y = TF) +
+  geom_col(fill = "#de425b", color = "black") +
+  labs(
+    title = "1 hour",
+    subtitle = "Antagonized",
+    x = "Number of Regulated Genes",
+    y = "Transcription Factor"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 16),  
+    axis.text.x = element_text(size = 16),  
+    axis.title.x = element_text(hjust =0.5 ,size = 16, face = "bold"),
+    axis.title.y = element_text(hjust = 0.75, size = 16, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 19, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+ggplot(Six_hour_Unaff_deficit %>% 
+       arrange(desc(Significance)) %>% 
+       head(10) %>%
+       mutate(TF = reorder(TF, Significance))) +
+  aes(x = IRGs, y = TF) +
+  geom_col(fill = "grey", color = "black") +
+  labs(
+    title = "6 hour",
+    subtitle = "Unaffected",
+    x = "Number of Regulated Genes",
+    y = "Transcription Factor"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 16),  
+    axis.text.x = element_text(size = 16),  
+    axis.title.x = element_text(hjust =0.5 ,size = 16, face = "bold"),
+    axis.title.y = element_text(hjust = 0.75, size = 16, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 19, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+ggplot(Six_hour_ANT_deficit %>% 
+       arrange(desc(Significance)) %>% 
+       head(10) %>%
+       mutate(TF = reorder(TF, Significance))) +
+  aes(x = IRGs, y = TF) +
+  geom_col(fill = "#de425b", color = "black") +
+  labs(
+    title = "6 hour",
+    subtitle = "Antagonized",
+    x = "Number of Regulated Genes",
+    y = "Transcription Factor"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 16),  
+    axis.text.x = element_text(size = 16),  
+    axis.title.x = element_text(hjust =0.5 ,size = 16, face = "bold"),
+    axis.title.y = element_text(hjust = 0.75, size = 16, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 19, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+ggplot(TwentyFour_hour_Unaff_deficit %>% 
+       arrange(desc(Significance)) %>% 
+       head(10) %>%
+       mutate(TF = reorder(TF, Significance))) +
+  aes(x = IRGs, y = TF) +
+  geom_col(fill = "grey", color = "black") +
+  labs(
+    title = "24 hours",
+    subtitle = "Unaffected",
+    x = "Number of Regulated Genes",
+    y = "Transcription Factor"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 16),  
+    axis.text.x = element_text(size = 16),  
+    axis.title.x = element_text(hjust =0.5 ,size = 16, face = "bold"),
+    axis.title.y = element_text(hjust = 0.75, size = 16, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 19, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+ggplot(TwentyFour_hour_ANT_deficit %>% 
+       arrange(desc(Significance)) %>% 
+       head(10) %>%
+       mutate(TF = reorder(TF, Significance))) +
+  aes(x = IRGs, y = TF) +
+  geom_col(fill = "#de425b", color = "black") +
+  labs(
+    title = "24 hours",
+    subtitle = "Antagonized",
+    x = "Number of Regulated Genes",
+    y = "Transcription Factor"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 16),  
+    axis.text.x = element_text(size = 16),  
+    axis.title.x = element_text(hjust =0.5 ,size = 16, face = "bold"),
+    axis.title.y = element_text(hjust = 0.75, size = 16, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 19, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+```
+
+```{r}
+merged_1h_antagonized <- One_Antagonized_bed %>% 
+       left_join(One_hour_ANT_deficit,by = "ID") %>%
+  dplyr::filter(!is.na(TF)) %>%
+  left_join(One_hour, by = c("Gene" = "SYMBOL"))
+
+merged_1h_unaffected <- One_Unaffected_bed %>% 
+       left_join(One_hour_Unaff_deficit,by = "ID") %>%
+  dplyr::filter(!is.na(TF)) %>%
+  left_join(One_hour, by = c("Gene" = "SYMBOL"))
+
+merged_6h_antagonized <- Six_Antagonized_bed %>% 
+       left_join(Six_hour_ANT_deficit,by = "ID") %>%
+  dplyr::filter(!is.na(TF)) %>%
+  left_join(Six_hours, by = c("Gene" = "SYMBOL"))
+
+merged_6h_unaffected <- Six_unaffected_bed %>% 
+       left_join(Six_hour_Unaff_deficit,by = "ID") %>%
+  dplyr::filter(!is.na(TF)) %>%
+  left_join(Six_hours, by = c("Gene" = "SYMBOL"))
+
+merged_24_antagonized <- Twentyfour_Antagonized_bed %>% 
+       left_join(TwentyFour_hour_ANT_deficit,by = "ID") %>%
+  dplyr::filter(!is.na(TF)) %>%
+  left_join(TwentyFour_hours, by = c("Gene" = "SYMBOL"))
+
+merged_24_unaffected <- Twentyfour_Unaffected_bed %>% 
+       left_join(TwentyFour_hour_Unaff_deficit,by = "ID") %>%
+  dplyr::filter(!is.na(TF)) %>%
+  left_join(TwentyFour_hours, by = c("Gene" = "SYMBOL"))
+
+```
+
+
+
+### Ridgeline plot : Predicted TFs and average fold change of the genes they regulate - \textcolor{red}{Figure 3 G-L }
+```{r}
+# Ridgeline_1h_unaffected <- 
+  ggplot(merged_1h_unaffected %>%
+         arrange(desc(Significance)) %>%
+         filter(TF %in% (merged_1h_unaffected %>% 
+                        arrange(desc(Significance)) %>%
+                        distinct(TF) %>%
+                        head(10) %>%
+                        pull(TF))), 
+       aes(x = FLAG_1hr.v.FLAG_0hr.logFC, y = TF, fill = Effect)) +
+  geom_density_ridges(alpha = 0.9, scale = 0.9) +
+  stat_summary(
+    aes(x = FLAG_1hr.v.FLAG_0hr.logFC, y = TF),
+    fun.data = "mean_cl_normal",
+    geom = "errorbarh",
+    height = 0.2,
+    color = "black"
+  ) +
+  scale_fill_manual(values = c("Up" = "grey")) +
+  scale_color_manual(values = c("Up" = "black")) +
+  ggtitle("1 hour") +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.y = element_blank(),   # remove horizontal gridlines behind ridges
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(size = 10, face = "plain", color = "black", hjust = 0.4),
+    axis.title.y = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.x = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.y = element_text(size = 10, face = "plain", color = "black"),
+    plot.title = element_text(size = 16, face = "plain", hjust = 0.5, color = "black")
+  ) +
+  xlab("Log2 fold-change") +
+  ylab("Transcription factor")
+
+# Ridgeline_1h_antagonized <- 
+  ggplot(merged_1h_antagonized %>%
+         arrange(desc(Significance)) %>%
+         filter(TF %in% (merged_1h_antagonized %>% 
+                        arrange(desc(Significance)) %>%
+                        distinct(TF) %>%
+                        head(10) %>%
+                        pull(TF))), 
+       aes(x = FLAG_1hr.v.FLAG_0hr.logFC, y = TF, fill = Effect)) +
+  geom_density_ridges(alpha = 0.9, scale = 0.9) +
+ # geom_jitter(aes(color = Effect), size = 0.9, height = 0.1, alpha = 0.6) +
+  stat_summary(
+    aes(x = FLAG_1hr.v.FLAG_0hr.logFC, y = TF),
+    fun.data = "mean_cl_normal",
+    geom = "errorbarh",
+    height = 0.2,
+    color = "black"
+  ) +
+  scale_fill_manual(values = c("Up" = "#de425b")) +
+  scale_color_manual(values = c("Up" = "black")) +
+  ggtitle("1 hour") +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_text(size = 10, face = "plain", color = "black", hjust = 0.4),
+    axis.title.y = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.x = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.y = element_text(size = 10, face = "plain", color = "black"),
+    plot.title = element_text(size = 16, face = "plain", hjust = 0.5, color = "black")
+  ) +
+  xlab("Log2 fold-change") +
+  ylab("Transcription factor")
+  
+# Ridgeline_6h_unaffected <- 
+  ggplot(merged_6h_unaffected %>%
+         arrange(desc(Significance)) %>%
+         filter(TF %in% (merged_6h_unaffected %>% 
+                        arrange(desc(Significance)) %>%
+                        distinct(TF) %>%
+                        head(10) %>%
+                        pull(TF))), 
+       aes(x = FLAG_6hr.v.FLAG_0hr.logFC, y = TF, fill = Effect)) +
+  geom_density_ridges(alpha = 0.9, scale = 0.9) +
+ # geom_jitter(aes(color = Effect), size = 0.9, height = 0.1, alpha = 0.6) +
+  stat_summary(
+    aes(x = FLAG_6hr.v.FLAG_0hr.logFC, y = TF),
+    fun.data = "mean_cl_normal",
+    geom = "errorbarh",
+    height = 0.2,
+    color = "black"
+  ) +
+  scale_fill_manual(values = c("Up" = "grey")) +
+  scale_color_manual(values = c("Up" = "black")) +
+  ggtitle("6 hour") +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_text(size = 10, face = "plain", color = "black", hjust = 0.4),
+    axis.title.y = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.x = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.y = element_text(size = 10, face = "plain", color = "black"),
+    plot.title = element_text(size = 16, face = "plain", hjust = 0.5, color = "black")
+  ) +
+  xlab("Log2 fold-change ") +
+  ylab("Transcription factor")
+  
+  # Ridgeline_6h_antagonized <- 
+  ggplot(merged_6h_antagonized %>%
+         arrange(desc(Significance)) %>%
+         filter(TF %in% (merged_6h_antagonized %>% 
+                        arrange(desc(Significance)) %>%
+                        distinct(TF) %>%
+                        head(10) %>%
+                        pull(TF))), 
+       aes(x = FLAG_6hr.v.FLAG_0hr.logFC, y = TF, fill = Effect)) +
+  geom_density_ridges(alpha = 0.9, scale = 0.9) +
+ # geom_jitter(aes(color = Effect), size = 0.9, height = 0.1, alpha = 0.6) +
+  stat_summary(
+    aes(x = FLAG_6hr.v.FLAG_0hr.logFC, y = TF),
+    fun.data = "mean_cl_normal",
+    geom = "errorbarh",
+    height = 0.2,
+    color = "black"
+  ) +
+  scale_fill_manual(values = c("Up" = "#de425b")) +
+  scale_color_manual(values = c("Up" = "black")) +
+  ggtitle("6 hour") +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_text(size = 10, face = "plain", color = "black", hjust = 0.4),
+    axis.title.y = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.x = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.y = element_text(size = 10, face = "plain", color = "black"),
+    plot.title = element_text(size = 16, face = "plain", hjust = 0.5, color = "black")
+  ) +
+  xlab("Log2 fold-change ") +
+  ylab("Transcription factor")
+  
+  # Ridgeline_24h_unaffected <- 
+  ggplot(merged_24_unaffected %>%
+         arrange(desc(Significance)) %>%
+         filter(TF %in% (merged_24_unaffected %>% 
+                        arrange(desc(Significance)) %>%
+                        distinct(TF) %>%
+                        head(10) %>%
+                        pull(TF))), 
+       aes(x = FLAG_24hr.v.FLAG_0hr.logFC, y = TF, fill = Effect)) +
+  geom_density_ridges(alpha = 0.9, scale = 0.9) +
+ # geom_jitter(aes(color = Effect), size = 0.9, height = 0.1, alpha = 0.6) +
+  stat_summary(
+    aes(x = FLAG_24hr.v.FLAG_0hr.logFC, y = TF),
+    fun.data = "mean_cl_normal",
+    geom = "errorbarh",
+    height = 0.2,
+    color = "black"
+  ) +
+  scale_fill_manual(values = c("Up" = "grey")) +
+  scale_color_manual(values = c("Up" = "black")) +
+        ggtitle("24 hour") +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_text(size = 10, face = "plain", color = "black", hjust = 0.4),
+    axis.title.y = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.x = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.y = element_text(size = 10, face = "plain", color = "black"),
+    plot.title = element_text(size = 16, face = "plain", hjust = 0.5, color = "black")
+  ) +
+  xlab("Log2 fold-change") +
+  ylab("Transcription factor")
+  
+ # Ridgeline_24h_antagonized <- 
+  ggplot(merged_24_antagonized %>%
+         arrange(desc(Significance)) %>%
+         filter(TF %in% (merged_24_antagonized %>% 
+                        arrange(desc(Significance)) %>%
+                        distinct(TF) %>%
+                        head(10) %>%
+                        pull(TF))), 
+       aes(x = FLAG_24hr.v.FLAG_0hr.logFC, y = TF, fill = Effect)) +
+  geom_density_ridges(alpha = 0.9, scale = 0.9) +
+ # geom_jitter(aes(color = Effect), size = 0.9, height = 0.1, alpha = 0.6) +
+  stat_summary(
+    aes(x = FLAG_24hr.v.FLAG_0hr.logFC, y = TF),
+    fun.data = "mean_cl_normal",
+    geom = "errorbarh",
+    height = 0.2,
+    color = "black"
+  ) +
+  scale_fill_manual(values = c("Up" = "#de425b")) +
+  scale_color_manual(values = c("Up" = "black")) +
+    ggtitle("24 hour") +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_text(size = 10, face = "plain", color = "black", hjust = 0.4),
+    axis.title.y = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.x = element_text(size = 10, face = "plain", color = "black"),
+    axis.text.y = element_text(size = 10, face = "plain", color = "black"),
+    plot.title = element_text(size = 16, face = "plain", hjust = 0.5, color = "black")
+  ) +
+  xlab("Log2 fold-change") +
+  ylab("Transcription factors")  
+  
+```
+
+```{r}
+circos_merged_1hour_antagonized <- merged_1h_antagonized %>%
+  arrange(desc(Significance)) %>%
+  filter(TF %in% (merged_1h_antagonized %>% 
+                 arrange(desc(Significance)) %>%
+                 distinct(TF) %>%
+                 head(10) %>%
+                 pull(TF))) %>%
+    dplyr::select(TF, Gene)
+
+
+circos_merged_1hour_unaffected <- merged_1h_unaffected %>%
+  arrange(desc(Significance)) %>%
+  filter(TF %in% (merged_1h_unaffected %>% 
+                 arrange(desc(Significance)) %>%
+                 distinct(TF) %>%
+                 head(10) %>%
+                 pull(TF))) %>%
+    dplyr::select(TF, Gene)
+
+circos_merged_6hour_antagonized <- merged_6h_antagonized %>%
+  arrange(desc(Significance)) %>%
+  filter(TF %in% (merged_6h_antagonized %>% 
+                 arrange(desc(Significance)) %>%
+                 distinct(TF) %>%
+                 head(10) %>%
+                 pull(TF))) %>%
+    dplyr::select(TF, Gene)
+
+circos_merged_6hour_unaffected <- merged_6h_unaffected %>%
+  arrange(desc(Significance)) %>%
+  filter(TF %in% (merged_6h_unaffected %>% 
+                 arrange(desc(Significance)) %>%
+                 distinct(TF) %>%
+                 head(10) %>%
+                 pull(TF))) %>%
+    dplyr::select(TF, Gene)
+
+circos_merged_24hour_antagonized <- merged_24_antagonized %>%
+  arrange(desc(Significance)) %>%
+  filter(TF %in% (merged_24_antagonized %>% 
+                 arrange(desc(Significance)) %>%
+                 distinct(TF) %>%
+                 head(10) %>%
+                 pull(TF))) %>%
+    dplyr::select(TF, Gene)
+
+circos_merged_24hour_unaffected <- merged_24_unaffected %>%
+  arrange(desc(Significance)) %>%
+  filter(TF %in% (merged_24_unaffected %>% 
+                 arrange(desc(Significance)) %>%
+                 distinct(TF) %>%
+                 head(10) %>%
+                 pull(TF))) %>%
+    dplyr::select(TF, Gene)
+```
+
+
+### Chord Plot : TF-Gene regulatory network for ISGs induced post 24h IFN treatment - \textcolor{red}{Figure 3 M,N}
+
+
+```{r}
+circos_merged_24hour_antagonized_downsampled <- circos_merged_24hour_antagonized %>%
+  group_by(TF) %>%
+  slice_head(n = 30) %>%
+  ungroup()
+```
+
+```{r}
+# png("24h_antagonized_circos_plot.png", width = 3000, height = 3000, res = 300)
+#png("../results/24h_Antagonized_circos_plot.png", width = 3000, height = 3000, res = 300)
+
+  #p24_A <- as.ggplot(~{
+grid.col <- c(
+  IRF3 = "#de425b", 'STAT1::STAT2' = "#de425b", IRF8 = "#de425b", 
+  IRF2 = "#de425b", IRF4 = "#de425b", IRF9 = "#de425b",
+  IRF5 = "#de425b", IRF1 = "#de425b", 
+  IRF6 = "#de425b", IRF7 = "#de425b"
+)
+
+# ---- Automatically compute gaps to match dataset
+n_TF <- length(unique(circos_merged_24hour_antagonized_downsampled$TF))
+n_Gene <- length(unique(circos_merged_24hour_antagonized_downsampled$Gene))
+gap.after <- c(rep(3, n_TF - 1), 20, rep(1, n_Gene - 1), 20)
+n_sectors <- length(unique(c(circos_merged_24hour_antagonized_downsampled$TF,
+                             circos_merged_24hour_antagonized_downsampled$Gene)))
+
+# adjust length automatically if mismatch occurs
+if (length(gap.after) != n_sectors) {
+  gap.after <- rep(2, n_sectors)
+}
+
+# ---- Circos plot
+circos.par(track.height = 0.002, start.degree = 240, gap.after = gap.after)
+
+chordDiagram(
+  circos_merged_24hour_antagonized_downsampled,
+  annotationTrack = "grid",
+  grid.col = grid.col,
+  preAllocateTracks = list(track.height = 0.01)
+)
+
+circos.trackPlotRegion(track.index = 2, panel.fun = function(x, y) {
+  xlim <- get.cell.meta.data("xlim")
+  ylim <- get.cell.meta.data("ylim")
+  sector.name <- get.cell.meta.data("sector.index")
+
+  if (sector.name %in% names(grid.col)) {
+    circos.text(
+      mean(xlim), ylim[1] + 2, sector.name,
+      facing = "clockwise", niceFacing = TRUE,
+      adj = c(0, 0.5), cex = 0.8, font = 2
+    )
+  }
+}, bg.border = NA)
+
+circos.clear()
+
+#  })
+
+#dev.off()
+
+```
+
+
+```{r}
+# png("24h_unaffected_circos_plot.png", width = 3000, height = 3000, res = 300)
+#png("../results/24h_Unaffected_circos_plot.png", width = 3000, height = 3000, res = 300)
+
+  # p24_U <- as.ggplot(~{
+grid.col <- c(
+  MLX = "grey", 'SREBF2(var.2)' = "grey", Nr2f6 = "grey", 
+  Klf1 = "grey", NFATC3 = "grey", ATF2 = "grey",
+  RUNX2 = "grey", Stat5a = "grey", 
+  NFYB = "grey", SREBF1 = "grey"
+)
+
+# ---- Automatically compute gaps to match dataset
+n_TF <- length(unique(circos_merged_24hour_unaffected$TF))
+n_Gene <- length(unique(circos_merged_24hour_unaffected$Gene))
+gap.after <- c(rep(3, n_TF - 1), 20, rep(1, n_Gene - 1), 20)
+n_sectors <- length(unique(c(circos_merged_24hour_unaffected$TF,
+                             circos_merged_24hour_unaffected$Gene)))
+
+# adjust length automatically if mismatch occurs
+if (length(gap.after) != n_sectors) {
+  gap.after <- rep(2, n_sectors)
+}
+
+# ---- Circos plot
+circos.par(track.height = 0.002, start.degree = 240, gap.after = gap.after)
+
+chordDiagram(
+  circos_merged_24hour_unaffected,
+  annotationTrack = "grid",
+  grid.col = grid.col,
+  preAllocateTracks = list(track.height = 0.01)
+)
+
+circos.trackPlotRegion(track.index = 2, panel.fun = function(x, y) {
+  xlim <- get.cell.meta.data("xlim")
+  ylim <- get.cell.meta.data("ylim")
+  sector.name <- get.cell.meta.data("sector.index")
+
+  if (sector.name %in% names(grid.col)) {
+    circos.text(
+      mean(xlim), ylim[1] + 2, sector.name,
+      facing = "clockwise", niceFacing = TRUE,
+      adj = c(0, 0.5), cex = 0.8, font = 2
+    )
+  }
+}, bg.border = NA)
+
+circos.clear()
+
+# })
+
+#dev.off()
+
+```
+
+# Experimental support for TF predictions
+
+CiiiDER output BED files were filtered to include only the top ten predicted transcription factors ranked by significance score. These filtered BED sets were then used for overlap analysis against experimental transcription factor ChIP-seq datasets from ENCODE, UniBind, GTRD, and Cistrome, using bedtools.
+
+"scripts/18_Multiple_Filter_Bedfile.py"
+
+Usage with example
+```{python, eval = FALSE}
+import pandas as pd
+import re
+import os
+
+def sanitize_filename(filename):
+    # Replace invalid characters with underscores
+    return re.sub(r'[\\/*?:"<>|]', "_", filename)
+
+def filter_bed_by_multiple_tfs(input_file, tf_dict):
+    # Read the BED file
+    df = pd.read_csv(input_file, sep='\t', header=None, 
+                     names=['chr', 'start', 'end', 'name', 'score', 'strand', 
+                            'thickStart', 'thickEnd', 'itemRgb'])
+    
+    # Filter and save for each TF
+    for tf, ids in tf_dict.items():
+        # Create a pattern that matches the TF name or any of its IDs
+        pattern = '|'.join([re.escape(tf)] + [re.escape(id) for id in ids])
+        
+        # Filter the dataframe
+        filtered_df = df[df['name'].str.contains(pattern, regex=True)]
+        
+        # Create sanitized output filename
+        output_file = sanitize_filename(f"{tf}.filtered.bed")
+        
+        # Write the filtered data to a new BED file
+        filtered_df.to_csv(output_file, sep='\t', header=False, index=False)
+
+        print(f"Filtered BED file created for {tf}: {output_file}")
+
+# Usage
+tf_dict = {
+    'MLX': ['MA0663.1'],
+    'SREBF2(var.2)': ['MA0828.1'],
+    'Nr2f6': ['MA0677.1'],
+    'Klf1': ['MA0493.1'],
+    'NFATC3': ['MA0625.1'],
+    'ATF2': ['MA1632.1'],
+    'RUNX2': ['MA0511.2'],
+    'Stat5a': ['MA1624.1'],
+    'NFYB': ['MA0502.2'],
+    'SREBF1': ['MA0595.1']
+
+    # Add more TF name: [TF_ID list] pairs as needed
+}
+
+filter_bed_by_multiple_tfs('../results/CiiiDER_Predictions/bed/IFN-Induced-Unaffected-24hr_CurrentSites.bed', tf_dict)
+```
+
+
+Datasets from ENCODE and UNIBIND for each of the predicted Transcription factors were retrieved. For ENCODE data sets (https://www.encodeproject.org/) each of predicted transcription factors were searched manually, those with experiment status flagged as **released** and replicate concordance confirmed by IDR (Irreproducible Discovery Rate) < 0.05 with Corresponding optimal IDR peak files (narrowPeak format) were downloaded.  For UniBIND (https://unibind.uio.no/) cis-Regulatory modules for species Homo sapiens in the ROBUST collection were downloaded in bed format. For ReMap2022 (https://remap.univ-amu.fr) Non redundant peaks for Homosapiens were downloaded.
+
+Overlap analysis between input filtered bed files against experimental verified bed files from ENCODE/UniBind was run using the following python scripts
+
+"scripts/19_Per_TF_ENCODE_CiiiDER_Overlap")
+"scripts/20_Per_TF_UniBind_CiiiDER_Overlap")
+
+
+for ENCODE datasets
+```{python , eval = FALSE}
+import os
+import subprocess
+import pandas as pd
+
+def run_bedtools_intersect(query_file, database_file, output_file):
+    command = f"bedtools intersect -a {query_file} -b {database_file} -wa -wb -f 0.5 > {output_file}"
+    subprocess.run(command, shell=True, check=True)
+
+def calculate_overlap(intersect_file, query_file):
+    try:
+        df = pd.read_csv(intersect_file, sep='\t', header=None)
+        total_query_regions = len(pd.read_csv(query_file, sep='\t', header=None))
+        if df.empty:
+            return 0, total_query_regions, 0
+        overlapping_regions = df[3].nunique()
+        percent_overlap = (overlapping_regions / total_query_regions) * 100
+        return overlapping_regions, total_query_regions, percent_overlap
+    except pd.errors.EmptyDataError:
+        total_query_regions = len(pd.read_csv(query_file, sep='\t', header=None))
+        return 0, total_query_regions, 0
+
+def process_tf_folder(query_file, tf_folder, tf_name):
+    results = []
+    for file in os.listdir(tf_folder):
+        if file.endswith('.bed'):
+            database_file = os.path.join(tf_folder, file)
+            output_file = f"{os.path.basename(query_file)}_{tf_name}_{file}_intersect_result.txt"
+            run_bedtools_intersect(query_file, database_file, output_file)
+            
+            overlapping, total, percent = calculate_overlap(output_file, query_file)
+            results.append({
+                'Query': os.path.basename(query_file),
+                'Database': file,
+                'Overlapping Regions': overlapping,
+                'Total Query Regions': total,
+                'Percent Overlap': percent
+            })
+            
+            os.remove(output_file)  # Clean up temporary file
+    
+    return pd.DataFrame(results)
+
+# Set the paths
+query_folders = ["1hr_antagonized", "1hr_unaffected", "24hr_antagonized", "24hr_unaffected", "6hr_antagonized", "6hr_unaffected"]
+comparison_dir = "."  # Current directory
+
+# Specify the transcription factors to include in the analysis
+tfs_to_analyze = ["ATF1", "ATF2", "ATF3", "CREB1", "EBF1", "HSF1", "HSF2", "HSF4", "JUN", "JUND", "KLF16", "PAX5", "RUNX1", "TAL1", "ZNF341"]
+
+# Process each query folder
+for query_folder in query_folders:
+    # Get all .bed files in the query folder that match the specified TFs
+    query_files = [f for f in os.listdir(query_folder) if f.endswith('.filtered.bed') and f.split('.')[0] in tfs_to_analyze]
+    
+    for query_file in query_files:
+        # Extract TF name from the query file (e.g., 'PAX5' from 'PAX5.filtered.bed')
+        tf_name = query_file.split('.')[0]
+        
+        query_path = os.path.join(query_folder, query_file)
+        tf_folder = os.path.join(comparison_dir, tf_name)
+        
+        if os.path.exists(tf_folder):
+            results_df = process_tf_folder(query_path, tf_folder, tf_name)
+            print(f"\nResults for {query_folder}/{query_file} vs {tf_name}:")
+            if results_df.empty:
+                print("No overlaps found for any database files.")
+            else:
+                print(results_df.to_string(index=False))
+            
+            # Optionally, save results to a CSV file
+            results_df.to_csv(f"{query_folder}_{query_file}_{tf_name}_overlap_results.csv", index=False)
+        else:
+            print(f"Folder for {tf_name} not found in comparison directory")
+
+print("\nOverlap analysis completed.")
+```
+
+for UniBind datasets
+```{python, eval=FALSE}
+import os
+import subprocess
+import pandas as pd
+
+def run_bedtools_intersect(query_file, database_file, output_file):
+    command = f"bedtools intersect -a {query_file} -b {database_file} -wa -wb -f 0.5 > {output_file}"
+    subprocess.run(command, shell=True, check=True)
+
+def calculate_overlap(intersect_file, query_file):
+    try:
+        df = pd.read_csv(intersect_file, sep='\t', header=None)
+        total_query_regions = len(pd.read_csv(query_file, sep='\t', header=None))
+        if df.empty:
+            return 0, total_query_regions, 0
+        overlapping_regions = df[3].nunique()
+        percent_overlap = (overlapping_regions / total_query_regions) * 100
+        return overlapping_regions, total_query_regions, percent_overlap
+    except pd.errors.EmptyDataError:
+        total_query_regions = len(pd.read_csv(query_file, sep='\t', header=None))
+        return 0, total_query_regions, 0
+
+def process_folder(query_file, folder_path, tf_name):
+    results = []
+    for file in os.listdir(folder_path):
+        if file.endswith('.bed'):
+            database_file = os.path.join(folder_path, file)
+            output_file = f"{os.path.basename(query_file)}_{tf_name}_{file}_intersect_result.txt"
+            run_bedtools_intersect(query_file, database_file, output_file)
+            
+            overlapping, total, percent = calculate_overlap(output_file, query_file)
+            results.append({
+                'Query': os.path.basename(query_file),
+                'Database': file,
+                'Overlapping Regions': overlapping,
+                'Total Query Regions': total,
+                'Percent Overlap': percent
+            })
+            
+            os.remove(output_file)  # Clean up temporary file
+    
+    return pd.DataFrame(results)
+
+# Set the paths
+query_folders = ["24hr_unaffected"]
+comparison_dir = "Validate_CiiiDER_UniBind/Comparison"
+
+# Specify the transcription factors to include in the analysis
+tfs_to_analyze = ["JUND", "JUN", "CREB1"]  # Add or remove TFs as needed
+
+# Process each query folder
+for query_folder in query_folders:
+    # Get all .bed files in the query folder that match the specified TFs
+    query_files = [f for f in os.listdir(query_folder) if f.endswith('.filtered.bed') and f.split('.')[0] in tfs_to_analyze]
+    
+    for query_file in query_files:
+        # Extract TF name from the query file (e.g., 'PAX5' from 'PAX5.filtered.bed')
+        tf_name = query_file.split('.')[0]
+        
+        query_path = os.path.join(query_folder, query_file)
+        tf_folder = os.path.join(comparison_dir, tf_name)
+        
+        if os.path.exists(tf_folder):
+            results_df = process_folder(query_path, tf_folder, tf_name)
+            print(f"\nResults for {query_folder}/{query_file} vs {tf_name}:")
+            if results_df.empty:
+                print("No overlaps found for any database files.")
+            else:
+                print(results_df.to_string(index=False))
+            
+            # Optionally, save results to a CSV file
+            results_df.to_csv(f"{query_folder}_{query_file}_{tf_name}_overlap_results.csv", index=False)
+        else:
+            print(f"Folder for {tf_name} not found in Comparison directory")
+
+print("\nOverlap analysis completed.")
+```
+
+# Session info 
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

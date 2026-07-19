@@ -1,0 +1,25 @@
+# R / RStudio
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+.Renviron
+
+# Package/library state
+renv/library/
+renv/staging/
+
+# OS clutter
+.DS_Store
+Thumbs.db
+
+# RNA-seq analysis outputs
+**/gene_count.csv
+*.bed
+*.BED
+data_processed/CiiiDER_Predictions/deficit/*MostSigDeficit.csv
+data_processed/targets.txt
+*.RData
+*.Rdata
+results/figures/**
+results/tables/**

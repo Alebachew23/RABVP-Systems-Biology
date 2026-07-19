@@ -1,0 +1,11 @@
+### STEP 2: Annotation packages
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(biomaRt)
+library(magrittr)
+library(RColorBrewer)
+library(openxlsx)
+library(dplyr)
+library(stringr)
+library(readr)
+library(edgeR)
