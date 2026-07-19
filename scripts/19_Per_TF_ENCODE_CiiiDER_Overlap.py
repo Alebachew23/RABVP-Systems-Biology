@@ -45,7 +45,7 @@ query_folders = ["1hr_antagonized", "1hr_unaffected", "24hr_antagonized", "24hr_
 comparison_dir = "."  # Current directory
 
 # Specify the transcription factors to include in the analysis
-tfs_to_analyze = ["ATF1", "ATF2", "ATF3", "CREB1", "EBF1", "HSF1", "HSF2", "HSF4", "JUN", "JUND", "KLF16", "PAX5", "RUNX1", "TAL1", "ZNF341"]
+tfs_to_analyze = []
 
 # Process each query folder
 for query_folder in query_folders:
