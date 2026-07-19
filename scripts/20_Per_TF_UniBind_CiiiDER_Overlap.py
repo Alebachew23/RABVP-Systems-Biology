@@ -41,11 +41,11 @@ def process_folder(query_file, folder_path, tf_name):
     return pd.DataFrame(results)
 
 # Set the paths
-query_folders = ["24hr_unaffected"]
+query_folders = [""]
 comparison_dir = "Validate_CiiiDER_UniBind/Comparison"
 
 # Specify the transcription factors to include in the analysis
-tfs_to_analyze = ["JUND", "JUN", "CREB1"]  # Add or remove TFs as needed
+tfs_to_analyze = [""]  # Add or remove TFs as needed
 
 # Process each query folder
 for query_folder in query_folders:
