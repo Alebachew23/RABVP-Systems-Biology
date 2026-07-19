@@ -1,5 +1,5 @@
 # project-alpha
-This repository holds scripts needed to analyze RNAseq data and generate all figures for the manuscript entitled “Rabies virus interferon antagonist P protein selectively modulates interferon signalling to inhibit antiviral genes while supporting proviral gene expression”. 
+This repository holds scripts used to analyze RNAseq and transcription factor prediction data and generate all figures for the manuscript entitled “Rabies virus interferon antagonist P protein selectively modulates interferon signalling to inhibit antiviral genes while supporting proviral gene expression”. 
 
 This project is set up for an RStudio workflow with a project root anchored by `Rerun_10_07_2026.Rproj`.
 
@@ -22,5 +22,5 @@ This project is set up for an RStudio workflow with a project root anchored by `
 
 ## Notes
 
-- The analysis script now uses `here::here()` so paths resolve from the project root.
+- The analysis script uses `here::here()` so paths resolve from the project root.
 - Output files are written under `results/figures/` and `results/tables/`.
