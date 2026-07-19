@@ -30,16 +30,7 @@ def filter_bed_by_multiple_tfs(input_file, tf_dict):
 
 # Usage
 tf_dict = {
-    'MLX': ['MA0663.1'],
-    'SREBF2(var.2)': ['MA0828.1'],
-    'Nr2f6': ['MA0677.1'],
-    'Klf1': ['MA0493.1'],
-    'NFATC3': ['MA0625.1'],
-    'ATF2': ['MA1632.1'],
-    'RUNX2': ['MA0511.2'],
-    'Stat5a': ['MA1624.1'],
-    'NFYB': ['MA0502.2'],
-    'SREBF1': ['MA0595.1']
+    'MLX': ['MA0663.1']
 
     # Add more TF name: [TF_ID list] pairs as needed
 }
