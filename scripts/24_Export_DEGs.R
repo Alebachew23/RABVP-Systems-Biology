@@ -111,7 +111,7 @@ for (type.name in names(types)) {
 }
 
 # Save workbook
-saveWorkbook(wb, "../results/Differentially_Expressed_Genes.xlsx", overwrite = TRUE)
+saveWorkbook(wb, "Differentially_Expressed_Genes.xlsx", overwrite = TRUE)
 
 # Create individual dataframe objects in environment (optional)
 for (name in names(dataframes_list)) {
