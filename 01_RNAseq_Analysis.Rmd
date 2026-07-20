@@ -66,7 +66,7 @@ The code below shows how raw data was preprocessed, mapped, and analyzed to inve
 
 In order to reproduce all steps listed below, including QC of raw reads and read mapping, raw fastq files will need to be downloaded from the ENA, under accession \textcolor{red}{**xxx**}. Gene count files
 and all code used in this analysis, including the Rmarkdown document used to compile this supplementary code file, are all available on GitHub [here](https://github.com/Alebachew23/project-alpha). Once this GitHub repo has been downloaded, navigate to root directory to find the Rmarkdown document as well as an RProject file. This should be your working directory for executing code. Downloaded data should be placed in data_raw directory. The analysis script uses `here::here()` so paths resolve from the project root.
-Output files are written under `results/figures/` and `results/tables/`. R1 and R2 FASTQ files were de-multiplexed using cutadapt v3.3 (with error rate 1/0 and action none) for deposition in ENA 
+Output files are written under `results/figures/` and `results/tables/`. R1 and R2 FASTQ files were de-multiplexed using cutadapt v3.3 (with error rate 0 and action none) for deposition in ENA 
 
 The library structure is as follows : R1 primer is used to read sample index (8 bp) followed by 10 bp unique molecular identifier (UMI). R2 primer reads the 3' end of the cDNA in sense orientation. 
 
@@ -94,22 +94,44 @@ A variety of R packages was used for this analysis. All graphics and data wrangl
 tidyverse suite of packages. All packages used are available from the Comprehensive R Archive Network
 (CRAN), Bioconductor.org, or Github. To avoid conflict additional R packages are added or detached in the latter part of the analysis. 
 
-```{r, message=FALSE}
+```{r, message=FALSE, warning=FALSE}
 # source("02_Packages.R")
-library(here)
-library(org.Hs.eg.db)
-library(AnnotationDbi)
-library(biomaRt)
-library(magrittr)
-library(RColorBrewer)
-library(openxlsx)
-library(dplyr)
-library(stringr)
-library(readr)
-library(edgeR)
-library(gt)
-library(ggridges)
-library(circlize)
+if (!requireNamespace("pacman", quietly = TRUE)) {
+  install.packages("pacman")
+}
+
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+
+cran_packages <- c(
+  "here",
+  "magrittr",
+  "RColorBrewer",
+  "openxlsx",
+  "dplyr",
+  "stringr",
+  "readr",
+  "gt",
+  "ggridges",
+  "circlize"
+)
+
+bioc_packages <- c(
+  "org.Hs.eg.db",
+  "AnnotationDbi",
+  "biomaRt",
+  "edgeR"
+)
+
+pacman::p_load(char = cran_packages)
+
+for (package_name in bioc_packages) {
+  if (!requireNamespace(package_name, quietly = TRUE)) {
+    BiocManager::install(package_name, ask = FALSE, update = FALSE)
+  }
+  library(package_name, character.only = TRUE)
+}
 ```
 
 ___

@@ -4,6 +4,7 @@
 .Ruserdata
 .Rproj.user/
 .Renviron
+ 01_RNAseq_Analysis.log
 
 # Package/library state
 renv/library/
