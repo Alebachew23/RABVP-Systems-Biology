@@ -3,7 +3,7 @@ title: "Supplementary Code for manuscript entitled - Rabies virus interferon ant
   P protein selectively modulates interferon signalling to inhibit antiviral genes
   while supporting proviral gene expression"
 author: "Alebachew Messele Kebede  \nCassandra T. David  \nStephen M. Rawlinson  \nCeline
-  Deffrasnes  \nPaul Gooley  \nSamuel C. Forster  \nGregory W. Moseley\n"
+  Deffrasnes  \nPaul R. Gooley  \nSamuel C. Forster  \nGregory W. Moseley\n"
 date: "2026-07-10"
 output:
   html_document:
@@ -50,13 +50,11 @@ dir.create(tables_dir, recursive = TRUE, showWarnings = FALSE)
 
 # Introduction 
 
-This reproducible and dynamic report was created using Rmarkdown and the Knitr package, and summarizes the basic code and outputs (plots, tables, etc) produced during the analysis. The relative file paths indicated in the code below assume that your project working directly is structured as indicated in the **README.MD** file.
+This reproducible and dynamic report was created using Rmarkdown and the Knitr package, and summarizes the basic code and outputs (plots, tables, etc) produced during the analysis. The relative file paths indicated in the code below assume that you are working in the project directory structure indicated in the **README.MD** file.
 
 ---
 
 # Background 
-
-Rabies virus P-protein (RABV-P) binds and inhibits IFN-activated STAT1/2 and so are typically considered to mediate shutdown of the IFN response. However, IFN signalling is not exclusively antiviral, with many IRGs reported to be required for or to facilitate infection by certain viruses. How viruses coordinate the apparent need to suppress certain antiviral IRGs, while presumably permitting the expression of others, including ‘proviral’ IRGs is poorly defined. However, it has been shown that type-I IFN can activate multiple pathways other than classical STAT1/2, so discriminatory targeting of specific pathways by IFN-antagonists may enable highly selective regulation of distinct IRGs, dependent on the requirements of the specific virus. Here, we analyse the global effects of RABV-P protein on the IFN-regulated transcriptome. 
 
 The code below shows how raw data was preprocessed, mapped, and analyzed to investigate the effect of RABV-P protein on the expression of ISGs. 
 
@@ -64,15 +62,15 @@ The code below shows how raw data was preprocessed, mapped, and analyzed to inve
 
 # Reproducibility and accessibility
 
-In order to reproduce all steps listed below, including QC of raw reads and read mapping, raw fastq files will need to be downloaded from the ENA, under accession \textcolor{red}{**xxx**}. Gene count files
-and all code used in this analysis, including the Rmarkdown document used to compile this supplementary code file, are all available on GitHub [here](https://github.com/Alebachew23/project-alpha). Once this GitHub repo has been downloaded, navigate to root directory to find the Rmarkdown document as well as an RProject file. This should be your working directory for executing code. Downloaded data should be placed in data_raw directory. The analysis script uses `here::here()` so paths resolve from the project root.
-Output files are written under `results/figures/` and `results/tables/`. R1 and R2 FASTQ files were de-multiplexed using cutadapt v3.3 (with error rate 0 and action none) for deposition in ENA 
+In order to reproduce all steps listed below, including QC of raw reads and read mapping, raw fastq files will need to be downloaded from the ENA, under accession \textcolor{red}{**xxx**}. Gene count files, outputs from transcription factors analysis, and all code used in this analysis, including the Rmarkdown document used to compile this supplementary code file, are all available on GitHub [here](https://github.com/Alebachew23/project-alpha). Once this GitHub repo has been downloaded, navigate to root directory to find the Rmarkdown document as well as an RProject file. This should be your working directory for executing code. The analysis script uses `here::here()` so paths resolve from the project root.
+
+Output files are written under `results/figures/` and `results/tables/`. R1 and R2 FASTQ files were de-multiplexed using cutadapt (v3.3) (with error rate 0 and action none) for deposition in ENA. 
 
 The library structure is as follows : R1 primer is used to read sample index (8 bp) followed by 10 bp unique molecular identifier (UMI). R2 primer reads the 3' end of the cDNA in sense orientation. 
 
  Sample indexes are provided as fasta file. 
 
-Demultiplexing with cutadapt 
+The following script was used to Demultiplex raw FASTQ files with cutadapt 
 ```{bash, eval=FALSE}
 cutadapt \
     -g file:Sample_Index_barcode.fasta \
@@ -138,7 +136,7 @@ ___
 
 # Preprocessing
 
-Raw RNAseq reads were pre-processed using ScPipe package (https://github.com/LuyiTian/scPipe) which was used for demultiplexing, transcript mapping and quality control of raw sequencing data. Reads were aligned to the human primary assembly genome file using the Rsubread (v3.17) package. 
+Raw RNAseq reads were pre-processed using ScPipe package (https://github.com/LuyiTian/scPipe) which was used for demultiplexing, transcript mapping and quality control of raw sequencing data. Reads were aligned to the human primary assembly genome file using the Rsubread (v3.17) package. Raw data for R1 and R2 are not currently in the Raw data folder (data_raw) but are written here to keep the narrative structure. Data can be retrieved from ENA for analysis.
 ```{r, eval=FALSE}
 library(scPipe)
 # Barcode annotation
@@ -167,7 +165,7 @@ mapped_bam <- file.path(out_dir, "aligned.mapped.bam")
 fq.transcript <- here::here("data_raw", "210119_NB551334_0179_AH7WGJBGXH", "fastq", "MultiplexRNASeq_S1_R2_001.fastq.gz")
 fq.barcode <- here::here("data_raw", "210119_NB551334_0179_AH7WGJBGXH", "fastq", "MultiplexRNASeq_S1_R1_001.fastq.gz")
 
-# Raw data for R1 and R2 are not currently in the Raw data folder but are written here to keep the narrative structure. Data can be retrieved from ENA for analysis
+
 
 # Analysis
 # Read structure; UMI Barcode bs2 = 0 bl2 = 8 us = 8 ul = 10
@@ -250,7 +248,7 @@ gt(targets)
 ```
 
 
-Data for the P1 isoform of RABV-P were included for the remainder of the analysis
+Only data for the P1 isoform of RABV-P were included for the remainder of the analysis
 ```{r select_samples, dependson = c('gene_counts')}
 seqdata<- subset(seqdata,select=c('gene_id',
                                   '1a_IFN0hFLAG_1','1b_IFN0hFLAG_2','1c_IFN0hFLAG_3', 
@@ -316,8 +314,7 @@ rownames(countdata) <- seqdata[,1]
 ```
 
 ## Annotation
-Gene Annotation data retrieved from org.Hs.eg.db (v 3.23) package. 
-
+Gene Annotation data was retrieved from org.Hs.eg.db (v 3.23) package. 
 ```{r annotate_genes, include=FALSE}
 annotations <- AnnotationDbi::select (org.Hs.eg.db, 
                        keys = rownames(countdata), 
@@ -330,7 +327,6 @@ genes <- annotations %>%
     .[rownames(countdata), ]
 ```
 
-Next we make DGEList and export it for later use. DGEList is a specialized data structure that holds our raw count data and experimental design information. 
 ```{r DGEList}
 myDGElist <- DGEList(counts = countdata, genes = genes[rownames(countdata), ], samples = targets)
 log2.cpm <- edgeR::cpm(myDGElist, log = TRUE, prior.count = 2)
@@ -341,8 +337,6 @@ write.csv(cbind(genes[rownames(countdata), ], countdata), file = here::here("res
 
 write.csv(cbind(Sample = colnames(countdata), targets), file = here::here("results", "tables", "P1_samples.csv"), quote = FALSE, row.names = FALSE)
 ```
-
-
 
 
 ## QC 
@@ -531,7 +525,7 @@ gene.plot <- function(gene, groups = TRUE, full.expression = FALSE, raw.counts =
 # pdf(file.path(figures_dir, "Gene_plot.pdf"), width = 10, height = 7)
 
 par(mfrow = c(1, 1))
-of.interest <- c("STAT1","NTS", "ISG15", "IRF1")
+of.interest <- c("STAT1","ISG15")
 
 for(goi in of.interest){
   id <- with(myDGElist$genes, ENTREZID[match(goi, SYMBOL)])
@@ -1259,11 +1253,6 @@ ggsave(filename = file.path(figures_dir, "PieChart_Upregulated.pdf"), plot = pie
        width = 10, height = 6, units = "in")
 ```
 
-
-
-
-
-
 IFN **down-regulated** genes affected by RABV-P
 ```{r 'Pie_down-regulated genes'}
 pie_chart_One_hour_down <- create_pie_chart(One_hour, "One hour", custom_colors, direction = -1)
@@ -1356,7 +1345,7 @@ ggsave(filename = file.path(figures_dir, "combined_parallel_plots.pdf"),
        height = 8)
 ```
 
-All the component for **Figure 1** are produced and exported as Pdf to be edited using *affinity designer* 
+All the components for **Figure 1** were exported as pdf and edited using *affinity designer* for the final version.
 
 
 
@@ -1519,9 +1508,11 @@ names(msigdb.descriptions) <- msigdb.gsets
 kegg.exclude <- "all"
 ```
 
-Here **$gs_collection** and **$gs_subcollection`** replace **&gs_cat** and **$gs_subcat**
-**collection$ncbi_gene** replaces **collection$entrez_gene**
 ```{r 'gene_sets'}
+
+# **$gs_collection** and **$gs_subcollection`** replace **&gs_cat** and **$gs_subcat**
+# **collection$ncbi_gene** replaces **collection$entrez_gene**
+
 library(msigdbr)
 
 msigdb.Hs <- msigdbr(species = "Homo sapiens")
@@ -1851,8 +1842,7 @@ for(set in c("H", "C2_CP:REACTOME", "C5_GO:BP")){ # names(msigdb.index.lists)
 
 
 
-### Barplots : IFN activated pathways antagonized/unaffected by RABV-P- Figure 2A-C
-
+### Barplots : IFN activated pathways antagonized/unaffected by RABV-P-\textcolor{red}{Figure 2A-C}
 ```{r, fig.width=14, fig.height=8}
 # library(dplyr)
 # library(RColorBrewer)
@@ -2379,7 +2369,7 @@ merged_24_unaffected <- Twentyfour_Unaffected_bed %>%
 
 
 
-### Ridgeline plot : Predicted TFs and average fold change of the genes they regulate - \textcolor{red}{Figure 3 G-L }
+### Ridgeline plot : Predicted TFs and average fold change of the genes they regulate - \textcolor{red}{Figure 3 G-L}
 ```{r}
 # Ridgeline_1h_unaffected <- 
   ggplot(merged_1h_unaffected %>%
@@ -2640,7 +2630,7 @@ circos_merged_24hour_unaffected <- merged_24_unaffected %>%
 ```
 
 
-### Chord Plot : TF-Gene regulatory network for ISGs induced post 24h IFN treatment - \textcolor{red}{Figure 3 M,N}
+### Chord Plot : TF-Gene regulatory network for ISGs induced post 24h IFN treatment -\textcolor{red}{Figure 3 M,N}
 
 
 ```{r}
@@ -2652,15 +2642,10 @@ circos_merged_24hour_antagonized_downsampled <- circos_merged_24hour_antagonized
 
 ```{r}
 # png("24h_antagonized_circos_plot.png", width = 3000, height = 3000, res = 300)
-#png("../results/24h_Antagonized_circos_plot.png", width = 3000, height = 3000, res = 300)
-
+# png("../results/24h_Antagonized_circos_plot.png", width = 3000, height = 3000, res = 300)
+# Add the name of Top ten TFs
   #p24_A <- as.ggplot(~{
-grid.col <- c(
-  IRF3 = "#de425b", 'STAT1::STAT2' = "#de425b", IRF8 = "#de425b", 
-  IRF2 = "#de425b", IRF4 = "#de425b", IRF9 = "#de425b",
-  IRF5 = "#de425b", IRF1 = "#de425b", 
-  IRF6 = "#de425b", IRF7 = "#de425b"
-)
+grid.col <- c(Name_of_antagonized_TF = "#de425b")
 
 # ---- Automatically compute gaps to match dataset
 n_TF <- length(unique(circos_merged_24hour_antagonized_downsampled$TF))
@@ -2711,13 +2696,9 @@ circos.clear()
 # png("24h_unaffected_circos_plot.png", width = 3000, height = 3000, res = 300)
 #png("../results/24h_Unaffected_circos_plot.png", width = 3000, height = 3000, res = 300)
 
+# Add the name of Top ten TFs
   # p24_U <- as.ggplot(~{
-grid.col <- c(
-  MLX = "grey", 'SREBF2(var.2)' = "grey", Nr2f6 = "grey", 
-  Klf1 = "grey", NFATC3 = "grey", ATF2 = "grey",
-  RUNX2 = "grey", Stat5a = "grey", 
-  NFYB = "grey", SREBF1 = "grey"
-)
+grid.col <- c( Name_of_unafected_TF = "grey")
 
 # ---- Automatically compute gaps to match dataset
 n_TF <- length(unique(circos_merged_24hour_unaffected$TF))
@@ -2801,23 +2782,13 @@ def filter_bed_by_multiple_tfs(input_file, tf_dict):
 
         print(f"Filtered BED file created for {tf}: {output_file}")
 
-# Usage
+# Usage with example
 tf_dict = {
-    'MLX': ['MA0663.1'],
-    'SREBF2(var.2)': ['MA0828.1'],
-    'Nr2f6': ['MA0677.1'],
-    'Klf1': ['MA0493.1'],
-    'NFATC3': ['MA0625.1'],
-    'ATF2': ['MA1632.1'],
-    'RUNX2': ['MA0511.2'],
-    'Stat5a': ['MA1624.1'],
-    'NFYB': ['MA0502.2'],
-    'SREBF1': ['MA0595.1']
-
-    # Add more TF name: [TF_ID list] pairs as needed
+    'MLX': ['MA0663.1']
+   # Add more TF name: [TF_ID list] pairs as needed
 }
 
-filter_bed_by_multiple_tfs('../results/CiiiDER_Predictions/bed/IFN-Induced-Unaffected-24hr_CurrentSites.bed', tf_dict)
+filter_bed_by_multiple_tfs('CiiiDER_Predictions/bed/IFN-Induced-Unaffected-24hr_CurrentSites.bed', tf_dict)
 ```
 
 
@@ -2878,7 +2849,7 @@ query_folders = ["1hr_antagonized", "1hr_unaffected", "24hr_antagonized", "24hr_
 comparison_dir = "."  # Current directory
 
 # Specify the transcription factors to include in the analysis
-tfs_to_analyze = ["ATF1", "ATF2", "ATF3", "CREB1", "EBF1", "HSF1", "HSF2", "HSF4", "JUN", "JUND", "KLF16", "PAX5", "RUNX1", "TAL1", "ZNF341"]
+tfs_to_analyze = [""]
 
 # Process each query folder
 for query_folder in query_folders:
@@ -2957,7 +2928,7 @@ query_folders = ["24hr_unaffected"]
 comparison_dir = "Validate_CiiiDER_UniBind/Comparison"
 
 # Specify the transcription factors to include in the analysis
-tfs_to_analyze = ["JUND", "JUN", "CREB1"]  # Add or remove TFs as needed
+tfs_to_analyze = [""]  # Add or remove TFs as needed
 
 # Process each query folder
 for query_folder in query_folders:
