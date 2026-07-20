@@ -9,5 +9,5 @@ write_xlsx(
     Six_hours_Unaffected = Six_hours_Unaffected_Df,
     TwentyFour_hours_Unaffected = TwentyFour_hours_Unaffected_Df
   ),
-  path = "../results/RABV-P_Antagonized_Unaffected_genes.xlsx"
+  path = "RABV-P_Antagonized_Unaffected_genes.xlsx"
 )
