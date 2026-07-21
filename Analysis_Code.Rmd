@@ -34,7 +34,7 @@ knitr::opts_chunk$set(
   warning = FALSE
 )
 
-here::i_am("01_RNAseq_Analysis.Rmd")
+here::i_am("Analysis_Code.Rmd")
 
 data_raw_dir <- here::here("data_raw")
 data_processed_dir <- here::here("data_processed")
