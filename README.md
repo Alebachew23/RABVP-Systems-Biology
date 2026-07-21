@@ -1,4 +1,4 @@
-# project-alpha
+# RABV-P Systems Biology
 This repository holds scripts used to analyze RNAseq and transcription factor prediction data and generate all figures for the manuscript entitled “Rabies virus interferon antagonist P protein selectively modulates interferon signalling to inhibit antiviral genes while supporting proviral gene expression”. 
 
 This project is set up for an RStudio workflow with a project root anchored by `Analysis_Code.Rproj`.
