@@ -62,7 +62,7 @@ The code below shows how raw data was preprocessed, mapped, and analyzed to inve
 
 # Reproducibility and accessibility
 
-In order to reproduce all steps listed below, including QC of raw reads and read mapping, raw fastq files will need to be downloaded from the ENA, under accession \textcolor{red}{**xxx**}. Gene count files, outputs from transcription factors analysis, and all code used in this analysis, including the Rmarkdown document used to compile this supplementary code file, are all available on GitHub [here](https://github.com/Alebachew23/project-alpha). Once this GitHub repo has been downloaded, navigate to root directory to find the Rmarkdown document as well as an RProject file. This should be your working directory for executing code. The analysis script uses `here::here()` so paths resolve from the project root.
+In order to reproduce all steps listed below, including QC of raw reads and read mapping, raw fastq files will need to be downloaded from the ENA, under accession \textcolor{red}{**PRJEB121415**}. Gene count files, outputs from transcription factors analysis, and all code used in this analysis, including the Rmarkdown document used to compile this supplementary code file, are all available on GitHub [here](https://github.com/Alebachew23/project-alpha). Once this GitHub repo has been downloaded, navigate to root directory to find the Rmarkdown document as well as an RProject file. This should be your working directory for executing code. The analysis script uses `here::here()` so paths resolve from the project root.
 
 Output files are written under `results/figures/` and `results/tables/`. R1 and R2 FASTQ files were de-multiplexed using cutadapt (v3.3) (with error rate 0 and action none) for deposition in ENA. 
 
