@@ -15,12 +15,7 @@ renv/staging/
 Thumbs.db
 
 # RNA-seq analysis outputs
-**/gene_count.csv
-*.bed
-*.BED
-data_processed/CiiiDER_Predictions/deficit/*MostSigDeficit.csv
-data_processed/targets.txt
 *.RData
 *.Rdata
-results/figures/**
-results/tables/**
+*.html
+*.pdf
